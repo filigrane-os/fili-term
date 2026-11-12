@@ -15,7 +15,8 @@ pub const ATTACH: u8 = 2;
 pub const INPUT: u8 = 3;
 /// u16 cols, u16 rows, u16 cell width, u16 cell height.
 pub const RESIZE: u8 = 4;
-/// u8 kind (0 delta, 1 page up, 2 page down, 3 top, 4 bottom), i32 lines (delta, positive = back in history).
+/// u8 kind (0 delta, 1 page up, 2 page down, 3 top, 4 bottom, 5 previous command, 6 next command), i32 lines (delta,
+/// positive = back in history).
 pub const SCROLL: u8 = 5;
 /// End the session (hang up its shell).
 pub const CLOSE: u8 = 6;
@@ -23,6 +24,16 @@ pub const CLOSE: u8 = 6;
 pub const LIST: u8 = 7;
 /// The last frame is on screen: the daemon sends the next one only after this (frames never pile up in the window).
 pub const ACK: u8 = 8;
+/// Text of a command block: u32 request, u32 block id, u8 part (0 output, 1 whole block). Answered by `BLOCK_TEXT`.
+pub const TEXT_OF: u8 = 9;
+/// Colours of the window, answered to the programs that ask (OSC 4/10/11): 18 × u32 (16 ANSI, text, background).
+pub const PALETTE: u8 = 30;
+/// One-shot, on a connection of its own: types text at the prompt of a session (`fili-term send`), without Enter:
+/// u32 session id, then the UTF-8 text.
+pub const SEND: u8 = 31;
+/// One-shot: u32 session id, u8 what (0 the blocks as JSON, 1 a block's output, 2 the whole block), u32 block id (0:
+/// the last command). Answered by `TEXT`, or `ERROR`.
+pub const QUERY: u8 = 32;
 
 // Daemon → window
 /// u32 id of the session this connection is attached to.
@@ -38,6 +49,15 @@ pub const BELL: u8 = 14;
 pub const CLIPBOARD: u8 = 15;
 /// Plain text answer (LIST): raw UTF-8.
 pub const TEXT: u8 = 16;
+/// A command block changed: u32 id, u8 state (0 prompt, 1 running, 2 done), i32 exit status (i32::MIN: none),
+/// u32 duration in ms (u32::MAX: none), string command line, string working directory.
+pub const BLOCK: u8 = 17;
+/// Working directory of the shell (OSC 7): string.
+pub const CWD: u8 = 18;
+/// Answer to `TEXT_OF`: u32 request, then the UTF-8 text (empty: no such block any more).
+pub const BLOCK_TEXT: u8 = 19;
+/// A one-shot request failed: string reason.
+pub const ERROR: u8 = 20;
 
 pub fn read_msg(r: &mut impl Read) -> io::Result<(u8, Vec<u8>)> {
     let mut len = [0u8; 4];
@@ -89,6 +109,9 @@ impl<'a> Reader<'a> {
     pub fn i32(&mut self) -> io::Result<i32> {
         Ok(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
+    pub fn rest(&mut self) -> &'a [u8] {
+        std::mem::take(&mut self.buf)
+    }
     pub fn string(&mut self) -> io::Result<String> {
         let n = self.u16()? as usize;
         Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
@@ -99,6 +122,9 @@ pub fn put_u16(out: &mut Vec<u8>, v: u16) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 pub fn put_u32(out: &mut Vec<u8>, v: u32) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+pub fn put_i32(out: &mut Vec<u8>, v: i32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 pub fn put_string(out: &mut Vec<u8>, s: &str) {

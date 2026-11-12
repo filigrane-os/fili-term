@@ -75,6 +75,30 @@ Window {
         }
         select(Math.min(i, tabs.length - 1));
     }
+    // The chat drawer (Rob) about a command block: the context file names it, Rob reads its output himself
+    function askRob(id) {
+        const v = win.view;
+        if (!v || id <= 0)
+            return;
+        const all = JSON.parse(v.contextJson()).blocks;
+        const b = all.find(x => x.id === id);
+        if (b)
+            Aeroport.askRob(v.contextJson(), id, b.command, b.exit !== null && b.exit !== 0);
+    }
+    // Context for the assistant (Mod+Y): the terminal of the active window, a moment after each change
+    Timer {
+        id: contextTimer
+        interval: 150
+        onTriggered: if (win.active && win.view) Aeroport.publishContext(win.view.contextJson(), 0)
+    }
+    onActiveChanged: contextTimer.restart()
+    onViewChanged: contextTimer.restart()
+    Connections {
+        target: win.view
+        function onBlocksRevisionChanged() { contextTimer.restart() }
+        function onCwdChanged() { contextTimer.restart() }
+    }
+
     function refocus() {
         if (view && !aboutCard.visible && !windowPanel.visible)
             view.forceActiveFocus();
@@ -102,6 +126,11 @@ Window {
             else if (name === "page-down") v.scrollPage(1);
             else if (name === "scroll-top") v.scrollPage(-2);
             else if (name === "scroll-bottom") v.scrollPage(2);
+            else if (name === "previous-command") v.jumpBlock(-1);
+            else if (name === "next-command") v.jumpBlock(1);
+            else if (name === "copy-last-output") v.copyBlock(v.lastBlock(), 0);
+            else if (name === "copy-last-command") v.copyCommand(v.lastBlock());
+            else if (name === "ask-rob") win.askRob(v.lastBlock());
         }
     }
 
@@ -255,6 +284,98 @@ Window {
         anchors { left: parent.left; right: parent.right; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
     }
 
+    // Command blocks: actions on the block under the pointer, at the right of its first line (pinned to the top of
+    // the view while that line is scrolled out). Takes no button: clicks and the wheel go on to the terminal.
+    MouseArea {
+        id: blockHover
+        anchors.fill: stack
+        hoverEnabled: true
+        acceptedButtons: Qt.NoButton
+        property var block: null
+        function look() {
+            const v = win.view;
+            const j = v && containsMouse ? v.blockAt(mouseY) : "";
+            block = j ? JSON.parse(j) : null;
+        }
+        onPositionChanged: look()
+        onContainsMouseChanged: look()
+        Connections {
+            target: win.view
+            function onBlocksRevisionChanged() { blockHover.look() }
+            function onScrollOffsetChanged() { blockHover.look() }
+        }
+
+        Rectangle {
+            id: blockBar
+            readonly property var b: blockHover.block
+            visible: b !== null && b.state !== "prompt"
+            x: parent.width - width - FiliTheme.space4
+            y: b ? Math.max(b.top - (height - win.fontSize * 1.2) / 2, FiliTheme.space1) : 0
+            width: barRow.width + 2 * FiliTheme.space1
+            height: 28
+            radius: FiliTheme.radiusControl
+            color: FiliTheme.background
+            border.width: FiliTheme.borderWidth
+            border.color: FiliTheme.border
+            Row {
+                id: barRow
+                anchors.centerIn: parent
+                spacing: FiliTheme.space1
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    readonly property var hovered: [copyOut, copyCmd, rerun, rob].find(x => x.hovered)
+                    text: hovered ? hovered.tip : blockBar.status()
+                    leftPadding: FiliTheme.space3
+                    rightPadding: FiliTheme.space2
+                    font.family: FiliTheme.font
+                    font.pixelSize: FiliTheme.sizeSmall
+                    color: !hovered && blockBar.b && blockBar.b.exit ? FiliTheme.danger : FiliTheme.textSecondary
+                }
+                IconButton {
+                    id: copyOut
+                    readonly property bool hovered: containsMouse
+                    name: "copy"
+                    tip: Aeroport.tr("Copy Output")
+                    enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
+                    onClicked: win.view.copyBlock(blockBar.b.id, 0)
+                }
+                IconButton {
+                    id: copyCmd
+                    readonly property bool hovered: containsMouse
+                    name: "terminal"
+                    tip: Aeroport.tr("Copy Command")
+                    onClicked: win.view.copyCommand(blockBar.b.id)
+                }
+                IconButton {
+                    id: rerun
+                    readonly property bool hovered: containsMouse
+                    name: "refresh"
+                    tip: Aeroport.tr("Run Again")
+                    enabledState: win.view !== null && blockBar.b !== null && win.view.blocksRevision >= 0 && win.view.canRerun()
+                    onClicked: win.view.rerunBlock(blockBar.b.id)
+                }
+                IconButton {
+                    id: rob
+                    readonly property bool hovered: containsMouse
+                    name: "chat"
+                    tip: blockBar.b && blockBar.b.exit ? Aeroport.tr("Ask Rob Why It Failed") : Aeroport.tr("Ask Rob About This Command")
+                    onClicked: win.askRob(blockBar.b.id)
+                }
+            }
+            // "Running", "Failed (2) · 3.4 s", "Done · 850 ms"
+            function status() {
+                if (!b)
+                    return "";
+                if (b.state === "running")
+                    return Aeroport.tr("Running");
+                const parts = [b.exit ? Aeroport.tr("Failed (%1)").replace("%1", b.exit) : Aeroport.tr("Done")];
+                if (b.duration !== null)
+                    parts.push(Aeroport.duration(b.duration));
+                return parts.join(" · ");
+            }
+        }
+    }
+
     // Footer: where the shell started, size of the grid or place in the history
     Rectangle {
         id: footer
@@ -314,5 +435,8 @@ Window {
     Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: win.run("zoom-in") }
     Shortcut { sequence: "Ctrl+-"; onActivated: win.run("zoom-out") }
     Shortcut { sequence: "Ctrl+0"; onActivated: win.run("zoom-reset") }
+    Shortcut { sequence: "Ctrl+Shift+Up"; onActivated: win.run("previous-command") }
+    Shortcut { sequence: "Ctrl+Shift+Down"; onActivated: win.run("next-command") }
+    Shortcut { sequence: "Ctrl+Shift+O"; onActivated: win.run("copy-last-output") }
     // Shift+PgUp / Shift+PgDown (history) are handled by the TerminalView itself
 }

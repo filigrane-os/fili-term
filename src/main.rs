@@ -13,8 +13,12 @@ use std::os::unix::net::UnixStream;
 fn usage() -> i32 {
     eprintln!(
         "usage: fili-term [-e COMMAND [ARGS…]] [--attach ID]\n       fili-term list\n       \
+         fili-term blocks [--session ID]                 commands of a session (JSON)\n       \
+         fili-term output [--session ID] [--all] [BLOCK] output of a command (default: the last one)\n       \
+         fili-term send [--session ID] TEXT              types TEXT at the prompt, without Enter\n       \
          fili-term ctl [--pid PID] action NAME | actions\n\n\
-         Opens a terminal window (Aéroport); sessions live in the daemon and survive their window."
+         Opens a terminal window (Aéroport); sessions live in the daemon and survive their window.\n\
+         The session defaults to $FILI_TERM_SESSION (set in each Aéroport shell)."
     );
     2
 }
@@ -35,6 +39,18 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("fili-term ctl: {e}");
+                1
+            }
+        },
+        Some(verb @ ("blocks" | "output" | "send")) => match session_command(verb, &args[1..]) {
+            Ok(text) => {
+                if !text.is_empty() {
+                    println!("{}", text.trim_end_matches('\n'));
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("fili-term {verb}: {e}");
                 1
             }
         },
@@ -59,6 +75,50 @@ fn list() -> i32 {
         }
         Err(_) => 1,
     }
+}
+
+/// `blocks`, `output`, `send`: one request to the daemon about a session
+fn session_command(verb: &str, args: &[String]) -> Result<String, String> {
+    let mut session: Option<u32> = std::env::var("FILI_TERM_SESSION").ok().and_then(|v| v.parse().ok());
+    let mut all = false;
+    let mut rest: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--session" => session = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--session needs a number")?),
+            "--all" if verb == "output" => all = true,
+            _ => rest.push(a.clone()),
+        }
+    }
+    let session = session.ok_or("no session: --session ID (see `fili-term list` or the context of Aéroport)")?;
+    let mut s = UnixStream::connect(proto::daemon_socket()).map_err(|_| "no daemon")?;
+    let mut b = Vec::new();
+    proto::put_u32(&mut b, session);
+    let kind = match verb {
+        "send" => {
+            if rest.is_empty() {
+                return Err("nothing to send".into());
+            }
+            b.extend_from_slice(rest.join(" ").as_bytes());
+            proto::SEND
+        }
+        _ => {
+            let block = match rest.as_slice() {
+                [] => 0,
+                [n] => n.parse::<u32>().map_err(|_| format!("not a block number: {n}"))?,
+                _ => return Err("one block at a time".into()),
+            };
+            b.push(if verb == "blocks" { 0 } else if all { 2 } else { 1 });
+            proto::put_u32(&mut b, block);
+            proto::QUERY
+        }
+    };
+    proto::write_msg(&mut s, kind, &b).map_err(|e| e.to_string())?;
+    let (kind, payload) = proto::read_msg(&mut s).map_err(|e| e.to_string())?;
+    if kind == proto::ERROR {
+        return Err(proto::Reader::new(&payload).string().unwrap_or_default());
+    }
+    Ok(String::from_utf8_lossy(&payload).into_owned())
 }
 
 fn open(args: &[String]) -> i32 {

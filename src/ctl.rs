@@ -14,7 +14,8 @@ use std::{
 pub const ACTIONS: &[&str] = &[
     "about", "new-tab", "new-window", "close-tab", "close-window", "copy", "paste", "next-tab", "previous-tab", "zoom-in",
     "zoom-out", "zoom-reset", "page-up", "page-down", "scroll-top", "scroll-bottom", "window-actions",
-    "toggle-window-buttons",
+    "toggle-window-buttons", "previous-command", "next-command", "copy-last-output", "copy-last-command",
+    "ask-rob",
 ];
 
 fn dir() -> Option<PathBuf> {

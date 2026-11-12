@@ -344,7 +344,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fili-term"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "cxx",
  "cxx-qt",
@@ -356,10 +356,11 @@ dependencies = [
 
 [[package]]
 name = "fili-term-daemon"
-version = "0.0.1"
+version = "2.0.0"
 dependencies = [
  "alacritty_terminal",
  "libc",
+ "polling",
 ]
 
 [[package]]

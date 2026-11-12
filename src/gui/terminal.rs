@@ -17,6 +17,7 @@ use cxx_qt_lib::{
 };
 
 use crate::proto::{self, Reader};
+use super::i18n::tr;
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -159,6 +160,8 @@ pub mod qobject {
         #[qproperty(i32, lines)]
         /// "fg bg selection cursor c0 … c15" (#rrggbb), from the theme
         #[qproperty(QString, colors)]
+        /// Changes with each change of the command blocks (on screen or their state): hover strip, menus
+        #[qproperty(i32, blocks_revision, cxx_name = "blocksRevision")]
         type TerminalView = super::TerminalViewRust;
 
         /// The shell ended (status), or the daemon went away (-1)
@@ -183,6 +186,38 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setShown"]
         fn set_shown(self: Pin<&mut TerminalView>, shown: bool);
+
+        /// Command block under a point (y in the item), JSON {id, top, bottom, outputTop, state, exit, duration,
+        /// command, cwd} (pixels; outputTop -1: no output), "" when none
+        #[qinvokable]
+        #[cxx_name = "blockAt"]
+        fn block_at(self: &TerminalView, y: f64) -> QString;
+        /// Latest block that ran a command (0: none)
+        /// What the assistant may know of this terminal (context file): session, directory, last commands
+        #[qinvokable]
+        #[cxx_name = "contextJson"]
+        fn context_json(self: &TerminalView) -> QString;
+        #[qinvokable]
+        #[cxx_name = "lastBlock"]
+        fn last_block(self: &TerminalView) -> i32;
+        /// Copy a block's output (part 0) or the whole block, prompt and command included (part 1)
+        #[qinvokable]
+        #[cxx_name = "copyBlock"]
+        fn copy_block(self: Pin<&mut TerminalView>, id: i32, part: i32);
+        #[qinvokable]
+        #[cxx_name = "copyCommand"]
+        fn copy_command(self: Pin<&mut TerminalView>, id: i32);
+        /// Run a block's command again (only while the shell waits at its prompt)
+        #[qinvokable]
+        #[cxx_name = "rerunBlock"]
+        fn rerun_block(self: Pin<&mut TerminalView>, id: i32);
+        #[qinvokable]
+        #[cxx_name = "canRerun"]
+        fn can_rerun(self: &TerminalView) -> bool;
+        /// Scroll to the command before (-1) or after (1) the one at the top of the view
+        #[qinvokable]
+        #[cxx_name = "jumpBlock"]
+        fn jump_block(self: Pin<&mut TerminalView>, direction: i32);
     }
 
     unsafe extern "RustQt" {
@@ -392,6 +427,44 @@ fn rgb(v: u32) -> QColor {
     QColor::from_rgb((v >> 16 & 0xff) as i32, (v >> 8 & 0xff) as i32, (v & 0xff) as i32)
 }
 
+/// a over b by t (0: b, 1: a)
+fn mix(a: u32, b: u32, t: f64) -> u32 {
+    let c = |s: u32| {
+        let (x, y) = ((a >> s & 0xff) as f64, (b >> s & 0xff) as f64);
+        ((x * t + y * (1.0 - t)).round() as u32 & 0xff) << s
+    };
+    c(16) | c(8) | c(0)
+}
+
+/// 850 ms, 3.4 s, 2 min 05 s, 1 h 02 min
+pub fn human_duration(ms: u32) -> String {
+    let s = ms / 1000;
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else if s < 60 {
+        tr("%1.%2 s").replace("%1", &s.to_string()).replace("%2", &(ms % 1000 / 100).to_string())
+    } else if s < 3600 {
+        format!("{} min {:02} s", s / 60, s % 60)
+    } else {
+        format!("{} h {:02} min", s / 3600, s % 3600 / 60)
+    }
+}
+
+fn json_string(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
 fn dim(v: u32) -> u32 {
     let c = |s: u32| ((v >> s & 0xff) * 2 / 3) << s;
     c(16) | c(8) | c(0)
@@ -461,6 +534,32 @@ struct Frame {
     offset: i32,
     history: i32,
     lines: Vec<(usize, Vec<Cell>, Vec<(usize, String)>)>,
+    blocks: Vec<Shown>,
+}
+
+/// A command block on screen (rows of the view; start may be above it, output is i32::MIN when there is none)
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Shown {
+    start: i32,
+    output: i32,
+    end: i32,
+    id: u32,
+}
+
+/// What the daemon said of a block
+#[derive(Clone, Default)]
+struct BlockInfo {
+    /// 0 prompt, 1 running, 2 done
+    state: u8,
+    exit: Option<i32>,
+    duration: Option<u32>,
+    command: String,
+    cwd: String,
+}
+
+/// What to do with a block's text when the daemon sends it
+enum TextUse {
+    Clipboard,
 }
 
 enum Message {
@@ -470,6 +569,9 @@ enum Message {
     Clipboard(String),
     Bell,
     Exit(i32),
+    Block(u32, BlockInfo),
+    Cwd(String),
+    BlockText(u32, String),
     Gone,
 }
 
@@ -529,6 +631,11 @@ pub struct TerminalViewRust {
     sel_b: Pos,
     last_mouse: Pos,
     in_font: HashMap<char, bool>,
+    blocks_revision: i32,
+    shown_blocks: Vec<Shown>,
+    block_info: HashMap<u32, BlockInfo>,
+    requests: HashMap<u32, TextUse>,
+    next_request: u32,
     // FILI_TERM_TRACE=1: keystroke → paint latency and frame sizes on stderr
     trace: bool,
     key_at: Option<Instant>,
@@ -576,6 +683,11 @@ impl Default for TerminalViewRust {
             sel_b: Pos::default(),
             last_mouse: Pos { col: -1, line: -1 },
             in_font: HashMap::new(),
+            blocks_revision: 0,
+            shown_blocks: Vec::new(),
+            block_info: HashMap::new(),
+            requests: HashMap::new(),
+            next_request: 1,
             trace: std::env::var_os("FILI_TERM_TRACE").is_some(),
             key_at: None,
         }
@@ -607,6 +719,7 @@ impl cxx_qt::Constructor<()> for qobject::TerminalView {
                 if let Some(pal) = Pal::parse(&v.colors.to_string()) {
                     v.as_mut().rust_mut().pal = pal;
                     v.as_mut().set_fill_color(&rgb(pal.bg));
+                    v.as_mut().send_palette();
                     v.mark_all();
                 }
             })
@@ -658,6 +771,27 @@ fn decode(kind: u8, payload: &[u8]) -> Option<Message> {
         proto::CLIPBOARD => Message::Clipboard(r.string().ok()?),
         proto::BELL => Message::Bell,
         proto::EXIT => Message::Exit(r.i32().ok()?),
+        proto::BLOCK => {
+            let id = r.u32().ok()?;
+            let state = r.u8().ok()?;
+            let exit = r.i32().ok()?;
+            let duration = r.u32().ok()?;
+            let command = r.string().ok()?;
+            let cwd = r.string().ok()?;
+            let info = BlockInfo {
+                state,
+                exit: (exit != i32::MIN).then_some(exit),
+                duration: (duration != u32::MAX).then_some(duration),
+                command,
+                cwd,
+            };
+            Message::Block(id, info)
+        }
+        proto::CWD => Message::Cwd(r.string().ok()?),
+        proto::BLOCK_TEXT => {
+            let request = r.u32().ok()?;
+            Message::BlockText(request, String::from_utf8_lossy(r.rest()).into_owned())
+        }
         _ => return None,
     })
 }
@@ -696,7 +830,15 @@ fn decode_frame(r: &mut Reader<'_>) -> std::io::Result<Frame> {
         }
         lines.push((line, cells, extras));
     }
-    Ok(Frame { cols, rows, mode, cursor_col, cursor_line, cursor_shape, offset, history, lines })
+    let mut blocks = Vec::new();
+    // Older daemons send no blocks
+    if let Ok(n) = r.u16() {
+        for _ in 0..n {
+            let (start, output, end) = (r.i32()?, r.i32()?, r.i32()?);
+            blocks.push(Shown { start, output, end, id: r.u32()? });
+        }
+    }
+    Ok(Frame { cols, rows, mode, cursor_col, cursor_line, cursor_shape, offset, history, lines, blocks })
 }
 
 fn sgr_or_x10(mode: u32, button: i32, col: i32, line: i32, press: bool) -> Vec<u8> {
@@ -792,6 +934,21 @@ impl qobject::TerminalView {
         let thread = self.qt_thread();
         std::thread::spawn(move || read_loop(reader, thread));
         self.as_mut().rust_mut().conn = Some(Conn(stream));
+        self.send_palette();
+    }
+
+    /// Colours the programs get when they ask (OSC 4/10/11): those of the theme
+    fn send_palette(self: Pin<&mut Self>) {
+        let mut b = Vec::with_capacity(72);
+        for v in self.pal.ansi.iter().chain([&self.pal.fg, &self.pal.bg]) {
+            proto::put_u32(&mut b, *v);
+        }
+        self.send(proto::PALETTE, &b);
+    }
+
+    fn bump_blocks(mut self: Pin<&mut Self>) {
+        let r = self.blocks_revision.wrapping_add(1);
+        self.as_mut().set_blocks_revision(r);
     }
 
     fn handle(mut self: Pin<&mut Self>, msg: Message) {
@@ -801,6 +958,37 @@ impl qobject::TerminalView {
             Message::Title(t) => self.set_title(QString::from(&t)),
             Message::Clipboard(t) => set_clipboard_text(&t, ClipboardMode::Clipboard),
             Message::Bell => self.bell(),
+            Message::Block(id, info) => {
+                let on_screen = self.shown_blocks.iter().any(|b| b.id == id);
+                {
+                    let mut r = self.as_mut().rust_mut();
+                    r.block_info.insert(id, info);
+                    // Old blocks the window will not show again
+                    if r.block_info.len() > 4000 {
+                        let mut ids: Vec<u32> = r.block_info.keys().copied().collect();
+                        ids.sort_unstable();
+                        for old in &ids[..ids.len() - 2000] {
+                            r.block_info.remove(old);
+                        }
+                    }
+                }
+                if on_screen {
+                    self.as_mut().mark_all();
+                }
+                self.bump_blocks();
+            }
+            Message::Cwd(dir) => {
+                if !dir.is_empty() && self.cwd.to_string() != dir {
+                    self.set_cwd(QString::from(&dir));
+                }
+            }
+            Message::BlockText(request, text) => {
+                let action = self.as_mut().rust_mut().requests.remove(&request);
+                match action {
+                    Some(TextUse::Clipboard) if !text.is_empty() => set_clipboard_text(&text, ClipboardMode::Clipboard),
+                    _ => {}
+                }
+            }
             Message::Exit(status) => {
                 self.as_mut().rust_mut().conn = None;
                 self.exited(status);
@@ -847,6 +1035,11 @@ impl qobject::TerminalView {
         }
         if f.history != self.history_size {
             self.as_mut().set_history_size(f.history);
+        }
+        if f.blocks != self.shown_blocks {
+            self.as_mut().rust_mut().shown_blocks = f.blocks;
+            self.as_mut().mark_all();
+            self.as_mut().bump_blocks();
         }
         let cols = self.cols;
         let mut dirty = Vec::with_capacity(f.lines.len());
@@ -1103,6 +1296,8 @@ impl qobject::TerminalView {
             }
         }
 
+        self.as_mut().paint_blocks(p, line, fonts);
+
         // Cursor (hollow while the window is not focused)
         let cur_col = self.cur_col as usize;
         if line == self.cur_line && self.cur_shape != 0 && cur_col < cols && self.scroll_offset == 0 {
@@ -1137,6 +1332,63 @@ impl qobject::TerminalView {
             p.as_mut().set_pen(&QPen::from(&rgb(self.pal.fg)));
             p.as_mut().draw_text(&QPoint::new(x as i32, y + ascent), &text);
             p.as_mut().fill_rect(&QRectF::new(x, (y + ascent + 2) as f64, w, 1.0), &rgb(self.pal.fg));
+        }
+    }
+
+    /// Command blocks on a row: a hairline above each block, a bar in the left margin while the command runs (accent)
+    /// or after it failed (red), and at the right of its first row how it ended (status when not 0, time from a second)
+    fn paint_blocks(self: Pin<&mut Self>, p: &mut Pin<&mut cxx_qt_lib::QPainter>, line: i32, fonts: &Fonts) {
+        let (pad, cw, ch, ascent, cols) = (self.padding, self.cw, self.ch, self.ascent, self.cols);
+        let y = (pad + line * ch) as f64;
+        let width = self.width();
+        for b in &self.shown_blocks {
+            if line < b.start || line > b.end {
+                continue;
+            }
+            let Some(info) = self.block_info.get(&b.id) else { continue };
+            let failed = info.state == 2 && info.exit.is_some_and(|e| e != 0);
+            if line == b.start && line > 0 {
+                p.as_mut().fill_rect(&QRectF::new(0.0, y, width, 1.0), &rgb(mix(self.pal.fg, self.pal.bg, 0.16)));
+            }
+            if pad >= 6 && (info.state == 1 || failed) {
+                let color = if failed { self.pal.ansi[1] } else { self.pal.cursor };
+                let top = if line == b.start { y + 3.0 } else { y };
+                let bottom = if line == b.end { y + ch as f64 - 2.0 } else { y + ch as f64 };
+                p.as_mut().fill_rect(&QRectF::new((pad / 2 - 1) as f64, top, 2.0, bottom - top), &rgb(color));
+            }
+            if line != b.start || info.state != 2 || info.command.is_empty() {
+                continue;
+            }
+            let mut status = Vec::new();
+            if failed {
+                status.push(format!("✗ {}", info.exit.unwrap_or(0)));
+            }
+            if let Some(ms) = info.duration.filter(|&ms| ms >= 1000 || failed) {
+                status.push(human_duration(ms));
+            }
+            if status.is_empty() {
+                continue;
+            }
+            let text = status.join(" · ");
+            let n = text.chars().count() + 2;
+            if n + 4 > cols {
+                continue;
+            }
+            // Only over blank cells: the end of the prompt line, never over text or the cursor
+            let base = line as usize * cols;
+            let blank = (cols - n..cols).all(|c| {
+                let cell = &self.cells[base + c];
+                (cell.c == ' ' || cell.c == '\0') && resolve(cell.bg, &self.pal) == self.pal.bg
+            });
+            let cursor_here = line == self.cur_line && self.cur_col as usize >= cols - n;
+            if !blank || cursor_here {
+                continue;
+            }
+            let color = if failed { self.pal.ansi[1] } else { mix(self.pal.fg, self.pal.bg, 0.55) };
+            p.as_mut().set_font(&fonts.faces[0]);
+            p.as_mut().set_pen(&QPen::from(&rgb(color)));
+            let x = pad + (cols - n + 2) as i32 * cw;
+            p.as_mut().draw_text(&QPoint::new(x, y as i32 + ascent), &QString::from(text.as_str()));
         }
     }
 
@@ -1636,6 +1888,110 @@ impl qobject::TerminalView {
 
     fn close_session(self: Pin<&mut Self>) {
         self.send(proto::CLOSE, &[]);
+    }
+
+    fn block_at(&self, y: f64) -> QString {
+        let (pad, ch) = (self.padding as f64, self.ch as f64);
+        let row = ((y - pad) / ch).floor() as i32;
+        let Some(b) = self.shown_blocks.iter().find(|b| row >= b.start && row <= b.end) else { return QString::default() };
+        let Some(info) = self.block_info.get(&b.id) else { return QString::default() };
+        if info.state == 0 || info.command.is_empty() {
+            return QString::default();
+        }
+        let px = |r: i32| pad + r as f64 * ch;
+        let output = if b.output == i32::MIN || b.output > b.end { -1.0 } else { px(b.output) };
+        let state = ["prompt", "running", "done"][info.state.min(2) as usize];
+        let exit = info.exit.map_or("null".to_string(), |e| e.to_string());
+        let duration = info.duration.map_or("null".to_string(), |d| d.to_string());
+        QString::from(&format!(
+            "{{\"id\":{},\"top\":{},\"bottom\":{},\"outputTop\":{},\"state\":\"{state}\",\"exit\":{exit},\"duration\":{duration},\"command\":{},\"cwd\":{}}}",
+            b.id,
+            px(b.start),
+            px(b.end + 1),
+            output,
+            json_string(&info.command),
+            json_string(&info.cwd)
+        ))
+    }
+
+    fn context_json(&self) -> QString {
+        let mut ids: Vec<&u32> = self.block_info.iter().filter(|(_, b)| b.state != 0 && !b.command.is_empty()).map(|(id, _)| id).collect();
+        ids.sort_unstable();
+        let blocks: Vec<String> = ids[ids.len().saturating_sub(20)..]
+            .iter()
+            .map(|id| {
+                let b = &self.block_info[id];
+                format!(
+                    "{{\"id\":{id},\"command\":{},\"cwd\":{},\"state\":\"{}\",\"exit\":{},\"duration_ms\":{}}}",
+                    json_string(&b.command),
+                    json_string(&b.cwd),
+                    if b.state == 1 { "running" } else { "done" },
+                    b.exit.map_or("null".into(), |e| e.to_string()),
+                    b.duration.map_or("null".into(), |d| d.to_string())
+                )
+            })
+            .collect();
+        QString::from(&format!(
+            "{{\"session\":{},\"location\":{},\"title\":{},\"full_screen_program\":{},\"blocks\":[{}]}}",
+            self.session_id,
+            json_string(&self.cwd.to_string()),
+            json_string(&self.title.to_string()),
+            self.mode & mode::ALT_SCREEN != 0,
+            blocks.join(",")
+        ))
+    }
+
+    fn last_block(&self) -> i32 {
+        self.block_info.iter().filter(|(_, b)| b.state != 0 && !b.command.is_empty()).map(|(id, _)| *id as i32).max().unwrap_or(0)
+    }
+
+    fn copy_block(mut self: Pin<&mut Self>, id: i32, part: i32) {
+        if id <= 0 {
+            return;
+        }
+        let request = {
+            let mut r = self.as_mut().rust_mut();
+            let request = r.next_request;
+            r.next_request = request.wrapping_add(1).max(1);
+            r.requests.insert(request, TextUse::Clipboard);
+            request
+        };
+        let mut b = Vec::new();
+        proto::put_u32(&mut b, request);
+        proto::put_u32(&mut b, id as u32);
+        b.push(part.clamp(0, 1) as u8);
+        self.send(proto::TEXT_OF, &b);
+    }
+
+    fn copy_command(self: Pin<&mut Self>, id: i32) {
+        if let Some(info) = self.block_info.get(&(id as u32)) {
+            if !info.command.is_empty() {
+                set_clipboard_text(&info.command, ClipboardMode::Clipboard);
+            }
+        }
+    }
+
+    fn can_rerun(&self) -> bool {
+        self.mode & mode::ALT_SCREEN == 0
+            && self.block_info.keys().max().and_then(|id| self.block_info.get(id)).is_some_and(|b| b.state == 0)
+    }
+
+    fn rerun_block(self: Pin<&mut Self>, id: i32) {
+        let Some(command) = self.block_info.get(&(id as u32)).map(|b| b.command.clone()) else { return };
+        if command.is_empty() || !self.can_rerun() {
+            return;
+        }
+        // End of line, erase it (what was typed), then the command
+        let mut bytes = b"\x05\x15".to_vec();
+        bytes.extend(command.replace('\n', " ").bytes());
+        bytes.push(b'\r');
+        self.send_input(&bytes);
+    }
+
+    fn jump_block(self: Pin<&mut Self>, direction: i32) {
+        let mut b = vec![if direction < 0 { 5u8 } else { 6 }];
+        proto::put_u32(&mut b, 0);
+        self.send(proto::SCROLL, &b);
     }
 
     fn set_shown(mut self: Pin<&mut Self>, shown: bool) {

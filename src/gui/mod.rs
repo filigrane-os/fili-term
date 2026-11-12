@@ -26,8 +26,12 @@ pub fn run(request: &str) -> i32 {
     if let Some(engine) = engine.as_mut() {
         engine.load(&QUrl::from("qrc:/qt/qml/Fili/Term/qml/App.qml"));
     }
-    match app.as_mut() {
+    let code = match app.as_mut() {
         Some(app) => app.exec(),
         None => 1,
+    };
+    if let Some(f) = app::context_file() {
+        let _ = std::fs::remove_file(f);
     }
+    code
 }

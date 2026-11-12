@@ -2,6 +2,8 @@
 //! Started on demand by the window process; tiny and Qt-free on purpose.
 #[path = "../../src/proto.rs"]
 mod proto;
+mod blocks;
+mod pty_loop;
 mod session;
 
 fn main() {

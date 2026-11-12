@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.0 (2026-11-12)
+
+- Command blocks: shell integration loaded by the daemon (zsh, bash), OSC 133 marks kept in the grid; hairline,
+  failure bar, exit code and duration per command; hover strip with Copy output, Copy command, Run again, Ask Rob.
+- Ctrl+Shift+Up/Down jumps between commands, Ctrl+Shift+O copies the last output; menu actions previous-command,
+  next-command, copy-last-output, copy-last-command, ask-rob.
+- `fili-term blocks`, `fili-term output [BLOCK]`, `fili-term send TEXT` for the assistant; context file for Rob.
+- Current folder of the shell (OSC 7) in the title and the footer.
+- Colour queries (OSC 10/11/4) answered with the theme's palette.
+
 ## v1.0.0 (2026-11-12)
 
 - Display name Aéroport (About card: "Also known as fili-term").

@@ -14,7 +14,6 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::sync::FairMutex;
@@ -24,7 +23,9 @@ use alacritty_terminal::term::{Config, Term, TermDamage};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
+use crate::blocks::{self, Blocks, State};
 use crate::proto::{self, Reader};
+use crate::pty_loop::{Msg, PtyLoop, PtySender};
 
 /// Lines of history kept per session.
 const SCROLLBACK: usize = 10_000;
@@ -63,8 +64,10 @@ struct Pending {
 struct Shared {
     pending: Mutex<Pending>,
     cv: Condvar,
-    sender: OnceLock<EventLoopSender>,
+    sender: OnceLock<PtySender>,
     window: Mutex<WindowSize>,
+    /// Colours of the window (PALETTE), answered to OSC 4/10/11 queries.
+    palette: Mutex<Option<[u32; 18]>>,
 }
 
 impl Shared {
@@ -94,7 +97,7 @@ impl EventListener for Listener {
             Event::ClipboardStore(_, text) => s.notify(|p| p.clipboard = Some(text)),
             Event::PtyWrite(text) => s.send(Msg::Input(text.into_bytes().into())),
             Event::ColorRequest(index, format) => {
-                let reply = format(default_rgb(index));
+                let reply = format(palette_rgb(*s.palette.lock().unwrap(), index));
                 s.send(Msg::Input(reply.into_bytes().into()));
             }
             Event::TextAreaSizeRequest(format) => {
@@ -108,16 +111,18 @@ impl EventListener for Listener {
     }
 }
 
-/// Colours answered to OSC 4/10/11 queries (vim, bat… ask for the background). Same palette as the window.
-fn default_rgb(index: usize) -> Rgb {
-    const PALETTE: [u32; 16] = [
+/// Colours answered to OSC 4/10/11 queries (vim, bat… ask for the background): those of the window (PALETTE), the
+/// dark palette of Filigrane until it sent them.
+fn palette_rgb(window: Option<[u32; 18]>, index: usize) -> Rgb {
+    const DARK: [u32; 18] = [
         0x2d3744, 0xc98f93, 0xa3bfa8, 0xd2bf92, 0x9dbbd6, 0xb3a8c9, 0x95c0c6, 0xa9b8c8, 0x5f7894, 0xd9a5a9, 0xb8d0bc, 0xe0d0a8,
-        0xb9d0e4, 0xc6bdd8, 0xadd2d7, 0xdbe7f4,
+        0xb9d0e4, 0xc6bdd8, 0xadd2d7, 0xdbe7f4, 0xdbe7f4, 0x1c222b,
     ];
+    let p = window.unwrap_or(DARK);
     let v = match index {
-        i if i < 16 => PALETTE[i],
-        i if i == NamedColor::Background as usize => 0x1c222b,
-        _ => 0xdbe7f4,
+        i if i < 16 => p[i],
+        i if i == NamedColor::Background as usize => p[17],
+        _ => p[16],
     };
     Rgb { r: (v >> 16) as u8, g: (v >> 8) as u8, b: v as u8 }
 }
@@ -126,6 +131,7 @@ struct Session {
     id: u32,
     term: Arc<FairMutex<Term<Listener>>>,
     shared: Arc<Shared>,
+    blocks: Arc<Mutex<Blocks>>,
     command: String,
     started: Instant,
 }
@@ -155,6 +161,7 @@ pub fn run() -> i32 {
         }
     };
     tty::setup_env();
+    write_shell_integration();
     // The shells must not inherit the variables of whoever started the daemon's window
     for var in ["QT_QPA_PLATFORMTHEME", "QT_QUICK_BACKEND", "FILI_TERM_TRACE"] {
         // SAFETY: single thread at this point
@@ -192,6 +199,54 @@ fn serve(daemon: &Arc<Daemon>, mut stream: UnixStream) -> io::Result<()> {
             resize(&session, size);
             session
         }
+        proto::SEND => {
+            let id = r.u32()?;
+            let text = r.rest();
+            let session = daemon.sessions.lock().unwrap().get(&id).cloned();
+            let Some(session) = session else {
+                let mut b = Vec::new();
+                proto::put_string(&mut b, &format!("no session {id}"));
+                return proto::write_msg(&mut stream, proto::ERROR, &b);
+            };
+            // Typed, not run: the user reads it and presses Enter; several lines arrive as one paste
+            let bracketed = session.term.lock().mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+            let text = String::from_utf8_lossy(text).replace("\x1b", "");
+            let bytes = if bracketed { format!("\x1b[200~{text}\x1b[201~") } else { text.replace('\n', "\r") };
+            session.shared.send(Msg::Input(bytes.into_bytes().into()));
+            return proto::write_msg(&mut stream, proto::TEXT, b"");
+        }
+        proto::QUERY => {
+            let id = r.u32()?;
+            let what = r.u8()?;
+            let block = r.u32()?;
+            let session = daemon.sessions.lock().unwrap().get(&id).cloned();
+            let Some(session) = session else {
+                let mut b = Vec::new();
+                proto::put_string(&mut b, &format!("no session {id}"));
+                return proto::write_msg(&mut stream, proto::ERROR, &b);
+            };
+            let term = session.term.lock();
+            let blocks = session.blocks.lock().unwrap();
+            let answer = match what {
+                0 => Ok(blocks.json()),
+                _ => {
+                    let block = if block == 0 { blocks.last_command().map_or(0, |b| b.id) } else { block };
+                    match blocks.lines_of(&term, block) {
+                        Some((start, output, end)) => Ok(blocks::text(&term, if what == 1 { output } else { start }, end)),
+                        None => Err(format!("no block {block} on the screen or in the history")),
+                    }
+                }
+            };
+            drop((term, blocks));
+            return match answer {
+                Ok(text) => proto::write_msg(&mut stream, proto::TEXT, text.as_bytes()),
+                Err(e) => {
+                    let mut b = Vec::new();
+                    proto::put_string(&mut b, &e);
+                    proto::write_msg(&mut stream, proto::ERROR, &b)
+                }
+            };
+        }
         proto::LIST => {
             let mut text = String::new();
             let sessions = daemon.sessions.lock().unwrap();
@@ -218,13 +273,14 @@ fn serve(daemon: &Arc<Daemon>, mut stream: UnixStream) -> io::Result<()> {
     });
     let acked = Arc::new((Mutex::new(true), Condvar::new()));
     let closed = Arc::new(AtomicBool::new(false));
+    // Frames (writer thread) and answers (reader thread) go out whole, one after the other
+    let out = Arc::new(Mutex::new(stream.try_clone()?));
     let writer = {
-        let (session, stream, acked, closed, daemon) =
-            (session.clone(), stream.try_clone()?, acked.clone(), closed.clone(), daemon.clone());
-        std::thread::spawn(move || write_frames(&daemon, &session, stream, generation, &acked, &closed))
+        let (session, out, acked, closed, daemon) = (session.clone(), out.clone(), acked.clone(), closed.clone(), daemon.clone());
+        std::thread::spawn(move || write_frames(&daemon, &session, &out, generation, &acked, &closed))
     };
 
-    let result = read_input(&session, &mut stream, &acked);
+    let result = read_input(&session, &mut stream, &out, &acked);
     closed.store(true, Ordering::Relaxed);
     session.shared.notify(|_| {});
     acked.1.notify_all();
@@ -250,10 +306,12 @@ fn resize(session: &Session, size: WindowSize) {
 
 fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>) -> io::Result<Arc<Session>> {
     let id = daemon.next_id.fetch_add(1, Ordering::Relaxed);
-    let shell = argv.split_first().map(|(p, a)| tty::Shell::new(p.clone(), a.to_vec()));
     let command = if argv.is_empty() { std::env::var("SHELL").unwrap_or_else(|_| "sh".into()) } else { argv.join(" ") };
     let mut env = HashMap::new();
     env.insert("FILI_TERM_SESSION".to_string(), id.to_string());
+    // The user's shell gets the integration (marks of prompts and commands); a command given on the line does not
+    let argv = if argv.is_empty() { with_integration(&command, &mut env) } else { argv };
+    let shell = argv.split_first().map(|(p, a)| tty::Shell::new(p.clone(), a.to_vec()));
     let options = tty::Options {
         shell,
         working_directory: Some(PathBuf::from(cwd)).filter(|p| p.is_dir()),
@@ -267,19 +325,26 @@ fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>) -> i
         cv: Condvar::new(),
         sender: OnceLock::new(),
         window: Mutex::new(size),
+        palette: Mutex::new(None),
     });
     let config = Config { scrolling_history: SCROLLBACK, ..Default::default() };
     let term = Term::new(config, &Size { cols: size.num_cols as usize, rows: size.num_lines as usize }, Listener(shared.clone()));
     let term = Arc::new(FairMutex::new(term));
-    let event_loop = EventLoop::new(term.clone(), Listener(shared.clone()), pty, true, false)?;
-    let _ = shared.sender.set(event_loop.channel());
-    event_loop.spawn();
-    let session = Arc::new(Session { id, term, shared, command, started: Instant::now() });
+    let blocks = Arc::new(Mutex::new(Blocks::default()));
+    let pty_loop = PtyLoop::new(term.clone(), blocks.clone(), Listener(shared.clone()), pty)?;
+    let _ = shared.sender.set(pty_loop.channel());
+    pty_loop.spawn();
+    let session = Arc::new(Session { id, term, shared, blocks, command, started: Instant::now() });
     daemon.sessions.lock().unwrap().insert(id, session.clone());
     Ok(session)
 }
 
-fn read_input(session: &Session, stream: &mut UnixStream, acked: &(Mutex<bool>, Condvar)) -> io::Result<()> {
+fn read_input(
+    session: &Session,
+    stream: &mut UnixStream,
+    out: &Mutex<UnixStream>,
+    acked: &(Mutex<bool>, Condvar),
+) -> io::Result<()> {
     loop {
         let (kind, payload) = proto::read_msg(stream)?;
         let mut r = Reader::new(&payload);
@@ -298,15 +363,50 @@ fn read_input(session: &Session, stream: &mut UnixStream, acked: &(Mutex<bool>, 
             proto::SCROLL => {
                 let kind = r.u8()?;
                 let lines = r.i32()?;
+                let mut term = session.term.lock();
                 let scroll = match kind {
                     1 => Scroll::PageUp,
                     2 => Scroll::PageDown,
                     3 => Scroll::Top,
                     4 => Scroll::Bottom,
+                    // To the start of the command before or after the one at the top of the view
+                    5 | 6 => {
+                        let offset = term.grid().display_offset() as i32;
+                        match Blocks::neighbour(&term, -offset, if kind == 5 { -1 } else { 1 }) {
+                            Some(line) => Scroll::Delta(-line - offset),
+                            None if kind == 6 => Scroll::Bottom,
+                            None => Scroll::Delta(0),
+                        }
+                    }
                     _ => Scroll::Delta(lines),
                 };
-                session.term.lock().scroll_display(scroll);
+                term.scroll_display(scroll);
+                drop(term);
                 session.shared.notify(|p| p.dirty = true);
+            }
+            proto::TEXT_OF => {
+                let request = r.u32()?;
+                let id = r.u32()?;
+                let part = r.u8()?;
+                let text = {
+                    let term = session.term.lock();
+                    let blocks = session.blocks.lock().unwrap();
+                    match blocks.lines_of(&term, id) {
+                        Some((start, output, end)) => blocks::text(&term, if part == 0 { output } else { start }, end),
+                        None => String::new(),
+                    }
+                };
+                let mut b = Vec::with_capacity(text.len() + 4);
+                proto::put_u32(&mut b, request);
+                b.extend_from_slice(text.as_bytes());
+                proto::write_msg(&mut *out.lock().unwrap(), proto::BLOCK_TEXT, &b)?;
+            }
+            proto::PALETTE => {
+                let mut p = [0u32; 18];
+                for v in &mut p {
+                    *v = r.u32()?;
+                }
+                *session.shared.palette.lock().unwrap() = Some(p);
             }
             proto::ACK => {
                 *acked.0.lock().unwrap() = true;
@@ -325,13 +425,16 @@ fn read_input(session: &Session, stream: &mut UnixStream, acked: &(Mutex<bool>, 
 fn write_frames(
     daemon: &Daemon,
     session: &Session,
-    mut stream: UnixStream,
+    stream: &Mutex<UnixStream>,
     generation: u64,
     acked: &(Mutex<bool>, Condvar),
     closed: &AtomicBool,
 ) -> io::Result<()> {
     let mut full = true;
     let mut last = Instant::now() - FRAME_INTERVAL;
+    // Version of the block table the window has seen (0: all of it is sent first)
+    let mut seen = 0u64;
+    let mut seen_cwd = 0u64;
     loop {
         // Wait for the window to show the previous frame
         {
@@ -361,11 +464,26 @@ fn write_frames(
             std::thread::sleep(FRAME_INTERVAL - since);
         }
         session.shared.pending.lock().unwrap().dirty = false;
-        let frame = encode_frame(&mut session.term.lock(), full);
+        let mut out = Vec::new();
+        let frame = {
+            let mut term = session.term.lock();
+            let blocks = session.blocks.lock().unwrap();
+            // Blocks first: the frame that shows them finds them known
+            for b in blocks.changed_since(seen) {
+                write_into(&mut out, proto::BLOCK, &encode_block(b));
+            }
+            seen = blocks.version;
+            if blocks.cwd_version > seen_cwd {
+                seen_cwd = blocks.cwd_version;
+                let mut b = Vec::new();
+                proto::put_string(&mut b, &blocks.cwd);
+                write_into(&mut out, proto::CWD, &b);
+            }
+            encode_frame(&mut term, &blocks, full)
+        };
         full = false;
         last = Instant::now();
         *acked.0.lock().unwrap() = false;
-        let mut out = Vec::with_capacity(frame.len() + 64);
         write_into(&mut out, proto::FRAME, &frame);
         if let Some(t) = title {
             let mut b = Vec::new();
@@ -382,11 +500,11 @@ fn write_frames(
         }
         if let Some(code) = exited {
             write_into(&mut out, proto::EXIT, &code.to_le_bytes());
-            stream.write_all(&out)?;
+            stream.lock().unwrap().write_all(&out)?;
             daemon.sessions.lock().unwrap().remove(&session.id);
             return Ok(());
         }
-        stream.write_all(&out)?;
+        stream.lock().unwrap().write_all(&out)?;
     }
 }
 
@@ -413,8 +531,10 @@ fn color(c: Color, colors: &Colors) -> u32 {
 /// `u16 cols, u16 rows, u32 mode, u16 cursor col, i16 cursor line (-1: not on screen), u8 cursor shape (0 hidden,
 /// 1 block, 2 underline, 3 beam, 4 hollow block), u32 display offset, u32 history size, u8 full, u16 line count`,
 /// then per line `u16 line` and `cols` cells of `u32 char (bit 31: zero-width characters follow), u32 fg, u32 bg,
-/// u16 flags` (+ `u8 n, n × u32` when bit 31 is set).
-fn encode_frame(term: &mut Term<Listener>, full: bool) -> Vec<u8> {
+/// u16 flags` (+ `u8 n, n × u32` when bit 31 is set), then the command blocks on screen: `u16 count` and per block
+/// `i32 first row, i32 first row of the output (i32::MIN: none), i32 last row, u32 id` (rows of the view, the first
+/// may be above it).
+fn encode_frame(term: &mut Term<Listener>, blocks: &Blocks, full: bool) -> Vec<u8> {
     let cols = term.columns();
     let rows = term.screen_lines();
     let lines: Vec<usize> = match term.damage() {
@@ -467,7 +587,7 @@ fn encode_frame(term: &mut Term<Listener>, full: bool) -> Vec<u8> {
             proto::put_u32(&mut out, c);
             proto::put_u32(&mut out, color(cell.fg, colors));
             proto::put_u32(&mut out, color(cell.bg, colors));
-            proto::put_u16(&mut out, (cell.flags & !Flags::empty()).bits());
+            proto::put_u16(&mut out, (cell.flags & Flags::all()).bits());
             if let Some(z) = extra {
                 let z = &z[..z.len().min(255)];
                 out.push(z.len() as u8);
@@ -477,5 +597,68 @@ fn encode_frame(term: &mut Term<Listener>, full: bool) -> Vec<u8> {
             }
         }
     }
+    let visible = blocks.visible(term, offset as i32);
+    proto::put_u16(&mut out, visible.len() as u16);
+    for v in visible {
+        proto::put_i32(&mut out, v.start);
+        proto::put_i32(&mut out, v.output);
+        proto::put_i32(&mut out, v.end);
+        proto::put_u32(&mut out, v.id);
+    }
     out
+}
+
+fn encode_block(b: &blocks::Block) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32 + b.command.len() + b.cwd.len());
+    proto::put_u32(&mut out, b.id);
+    out.push(match b.state {
+        State::Prompt => 0,
+        State::Running => 1,
+        State::Done => 2,
+    });
+    proto::put_i32(&mut out, b.exit.unwrap_or(i32::MIN));
+    proto::put_u32(&mut out, b.duration.map_or(u32::MAX, |d| d.as_millis().min(u32::MAX as u128 - 1) as u32));
+    proto::put_string(&mut out, &b.command);
+    proto::put_string(&mut out, &b.cwd);
+    out
+}
+
+// ---------------------------------------------------------------- shell integration
+
+const ZSHENV: &str = include_str!("../../shell/zsh/.zshenv");
+const ZSH: &str = include_str!("../../shell/fili-term.zsh");
+const BASH: &str = include_str!("../../shell/fili-term.bash");
+
+fn shell_dir() -> PathBuf {
+    proto::runtime_dir().join("shell")
+}
+
+/// The scripts of the integration, in the runtime directory (they ship inside the daemon: nothing to install).
+fn write_shell_integration() {
+    let dir = shell_dir();
+    let _ = std::fs::create_dir_all(dir.join("zsh"));
+    let _ = std::fs::write(dir.join("zsh/.zshenv"), ZSHENV);
+    let _ = std::fs::write(dir.join("fili-term.zsh"), ZSH);
+    let _ = std::fs::write(dir.join("fili-term.bash"), BASH);
+}
+
+/// Command line of the user's shell with the integration loaded: zsh reads our `.zshenv` first (ZDOTDIR, put back
+/// before the user's files), bash our rc file, which reads `~/.bashrc`. Other shells start as they are. Turned off by
+/// `FILI_TERM_SHELL_INTEGRATION=0` in the environment of the daemon.
+fn with_integration(shell: &str, env: &mut HashMap<String, String>) -> Vec<String> {
+    if std::env::var("FILI_TERM_SHELL_INTEGRATION").is_ok_and(|v| v == "0") {
+        return Vec::new();
+    }
+    let dir = shell_dir();
+    match shell.rsplit('/').next().unwrap_or("") {
+        "zsh" => {
+            if let Ok(old) = std::env::var("ZDOTDIR") {
+                env.insert("FILI_TERM_ZDOTDIR".into(), old);
+            }
+            env.insert("ZDOTDIR".into(), dir.join("zsh").to_string_lossy().into_owned());
+            Vec::new()
+        }
+        "bash" => vec![shell.into(), "--rcfile".into(), dir.join("fili-term.bash").to_string_lossy().into_owned()],
+        _ => Vec::new(),
+    }
 }

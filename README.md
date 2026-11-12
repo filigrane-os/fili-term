@@ -34,6 +34,23 @@ Keys: Ctrl+Shift+T new tab, Ctrl+Shift+W close tab, Ctrl+PgUp/PgDn (or Ctrl+Tab)
 window, Ctrl+Shift+Q close window, Ctrl+Shift+C/V (Ctrl+Insert, Shift+Insert, Copy/Paste keys) copy/paste,
 Shift+PgUp/PgDn history, Ctrl+plus/minus/0 font size. Shift+mouse selects even when a program grabs the mouse.
 
+## Command blocks
+
+The daemon loads its shell integration by itself (zsh through `ZDOTDIR`, bash through `--rcfile`; nothing to add to
+`~/.zshrc`; `FILI_TERM_SHELL_INTEGRATION=0` turns it off). The shell marks its prompt, command and exit code
+(OSC 133) and its folder (OSC 7); the daemon keeps the marks in the grid, so they survive reflow and history. Each
+command is a block: a hairline above it, a red bar in the margin when it failed (accent while it runs), the exit code
+and duration at the right of its command line. Hovering a block shows Copy output, Copy command, Run again (only at an
+idle prompt) and Ask Rob. Ctrl+Shift+Up/Down jumps between commands, Ctrl+Shift+O copies the last output.
+
+From the command line (session `$FILI_TERM_SESSION` by default, or `--session ID`):
+`fili-term blocks` (JSON list), `fili-term output [BLOCK]` (output of a block, the last command by default),
+`fili-term send TEXT` (types text at the prompt without running it). Ask Rob writes the window's context file
+(`$XDG_RUNTIME_DIR/fili/context/PID.json`: session, folder, last commands) and runs `fili-chat ask`; the assistant
+reads the output itself with `fili-term output`.
+
+Colour queries (OSC 10/11/4) are answered with the theme's palette.
+
 ## Settings and theme
 
 `~/.config/filigrane/fili-term.toml`, every key optional: `font_size` (12), `padding` (10), `window_buttons` (true) at
@@ -53,8 +70,7 @@ terminal font is `mono`, its 16 colours `palette` (one list per mode); text, bac
 
 Full-screen repaint: ≈ 4.5 ms (software). Hidden tabs drop their image.
 
-## Not done yet (V1+)
+## Not done yet
 
-Box-drawing characters drawn by hand, selection in the history, search, URL detection, current folder of the shell
-(OSC 7), command blocks (OSC 133), Rob actions, session sidebar. The daemon still answers colour queries (OSC 10/11)
-with the dark palette.
+Box-drawing characters drawn by hand, selection in the history, search, URL detection, session sidebar,
+`-e`/`--app-id`/`--hold` options.

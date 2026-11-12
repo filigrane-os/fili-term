@@ -12,6 +12,7 @@ Rectangle {
     property bool enabledState: true
     // Toggle state (filter on): drawn with the active surface
     property bool toggled: false
+    readonly property bool containsMouse: area.containsMouse
     signal clicked()
 
     width: 28
