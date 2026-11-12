@@ -1,5 +1,5 @@
 #![allow(dead_code)] // shared by the window and the daemon, each uses its half
-//! Wire protocol between the session daemon and the window (src/gui/terminalview.cpp speaks the same format).
+//! Wire protocol between the session daemon and the window (src/gui/terminal.rs reads and writes it).
 //!
 //! Every message is `u32 length (LE) | u8 kind | payload`, the length counting the kind byte and the payload.
 //! Integers are little-endian. Strings are `u16 length | UTF-8 bytes`.

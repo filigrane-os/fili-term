@@ -1,14 +1,8 @@
 //! The window process: one Qt Quick application for every fili-term window.
-pub mod bridge;
+pub mod instance;
+pub mod terminal;
 
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString};
-
-unsafe extern "C" {
-    // src/gui/terminalview.cpp: TerminalView as `Fili.TermView 1.0`
-    fn fili_term_register_types();
-    // src/gui/instance.cpp: listens on ui.sock, opens the first window (request line, UTF-8, NUL-terminated)
-    fn fili_term_start(engine: *mut std::ffi::c_void, request: *const std::ffi::c_char);
-}
+use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 
 pub fn run(request: &str) -> i32 {
     // Static initializers of the Qt side; named here so the linker keeps them
@@ -20,17 +14,13 @@ pub fn run(request: &str) -> i32 {
         // SAFETY: nothing else runs yet (single thread, before Qt starts)
         unsafe { std::env::set_var("QT_QUICK_BACKEND", "software") };
     }
+    *instance::FIRST_REQUEST.lock().unwrap() = Some(request.to_string());
     let mut app = QGuiApplication::new();
     QGuiApplication::set_desktop_file_name(&QString::from("fili-term"));
-    // SAFETY: registers QML types; the application object exists and no engine has loaded yet
-    unsafe { fili_term_register_types() };
-    let engine = QQmlApplicationEngine::new();
-    if engine.is_null() {
-        return 1;
+    let mut engine = QQmlApplicationEngine::new();
+    if let Some(engine) = engine.as_mut() {
+        engine.load(&QUrl::from("qrc:/qt/qml/Fili/Term/qml/Main.qml"));
     }
-    let request = std::ffi::CString::new(request.replace('\0', "")).unwrap_or_default();
-    // SAFETY: the engine lives until the end of this function, after the event loop
-    unsafe { fili_term_start(engine.as_mut_ptr() as *mut std::ffi::c_void, request.as_ptr()) };
     match app.as_mut() {
         Some(app) => app.exec(),
         None => 1,

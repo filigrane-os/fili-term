@@ -1,7 +1,7 @@
 // V0 window: tabs of terminals, no Filigrane chrome yet (V1 brings the app-window anatomy and the bar menu).
 import QtQuick
 import QtQuick.Window
-import Fili.TermView
+import Fili.Term
 
 Window {
     id: win
@@ -27,7 +27,10 @@ Window {
     function select(i) {
         if (i < 0 || i >= tabs.length) return
         current = i
-        for (let k = 0; k < tabs.length; ++k) tabs[k].visible = k === i
+        for (let k = 0; k < tabs.length; ++k) {
+            tabs[k].visible = k === i
+            tabs[k].setShown(k === i)
+        }
         tabs[i].forceActiveFocus()
     }
     function zoom(step) {
@@ -44,8 +47,10 @@ Window {
     }
 
     Component.onCompleted: addTab(attachId, cwd, command)
+    signal closed()
     onClosing: {
         for (const t of tabs) t.closeSession()
+        win.closed()
         win.destroy()
     }
 

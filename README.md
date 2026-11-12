@@ -5,9 +5,10 @@ The Filigrane terminal (work in progress). Two processes:
 - `fili-term-daemon` (`daemon/`, Rust, no Qt): owns the ptys and the terminal state through
   [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal). Started on demand, it outlives the windows: a
   session survives a crash of the window and can be reattached (`fili-term list`, `fili-term --attach ID`).
-- `fili-term` (Rust + Qt Quick, software rendering): one process for every window. The grid is a C++
-  `QQuickPaintedItem` (`src/gui/terminalview.*`) that paints only the damaged lines it receives over the daemon's
-  socket (`src/proto.rs`). A frame is sent only after the window acknowledged the previous one, so a flood of output
+- `fili-term` (Rust + Qt Quick through cxx-qt, software rendering): one process for every window. The grid is a
+  `QQuickPaintedItem` subclass written in Rust (`src/gui/terminal.rs`) that paints only the damaged lines it receives
+  over the daemon's socket (`src/proto.rs`). No hand-written C++: the Qt classes cxx-qt-lib lacks (key, mouse and
+  input-method events, font metrics, clipboard) are bound straight to Qt's own members in the bridge. A frame is sent only after the window acknowledged the previous one, so a flood of output
   costs the window one frame per paint, never a queue.
 
 ## Build
@@ -26,12 +27,12 @@ program grabs the mouse.
 
 | | foot | fili-term |
 |---|---|---|
-| `cat` 50 MB of base64 | 0.59–0.70 s | 0.93–0.97 s |
-| key → painted (zsh echo, through the daemon) | n/a | median 1.8 ms, max 3.9 ms |
+| `cat` 50 MB of base64 (idle machine) | 0.78–0.79 s | 0.78–1.04 s |
+| key → painted (zsh echo, through the daemon) | n/a | median 1.7 ms, max 4.9 ms |
 | memory, 1 terminal (PSS) | ≈ 10 MB | 41 MB window + 7 MB daemon |
-| memory, 4 terminals (PSS) | ≈ 40 MB (4 windows) | 46 MB window (4 tabs) + 11 MB daemon |
+| memory, 4 terminals (PSS) | ≈ 40 MB (4 windows) | 50 MB window (4 tabs) + 11 MB daemon |
 
-Full-screen repaint: ≈ 5 ms (software). Hidden tabs drop their image.
+Full-screen repaint: ≈ 4.5 ms (software). Hidden tabs drop their image.
 
 ## Not done yet (V1+)
 
