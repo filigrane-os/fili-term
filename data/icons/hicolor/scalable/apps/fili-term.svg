@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Aéroport (fili-term): a prompt on the night surface, veil chevron, sand control tower -->
+<!-- Aéroport (fili-term): a prompt on the night surface, outlined veil chevron and dots, sand control tower -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
   <title>Aéroport</title>
   <rect x="6" y="12" width="84" height="72" rx="12" fill="#232b36" stroke="#3c4858" stroke-width="2"/>
   <path d="M6 30h84" stroke="#3c4858" stroke-width="2"/>
-  <circle cx="17" cy="21" r="3" fill="#5f7894"/>
-  <circle cx="27" cy="21" r="3" fill="#5f7894"/>
+  <circle cx="17" cy="21" r="2.5" fill="none" stroke="#5f7894" stroke-width="1"/>
+  <circle cx="27" cy="21" r="2.5" fill="none" stroke="#5f7894" stroke-width="1"/>
   <path d="M24 46l14 11-14 11" fill="none" stroke="#9dbbd6" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 46l14 11-14 11" fill="none" stroke="#232b36" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
   <path transform="translate(45.46 35.8) scale(0.05329)" fill="#d2bf92" fill-rule="evenodd" d="M563.491 660.543 L569.574 659.707 L572.787 655.659 L573.038 645.869 L570.585 641.2 L525.744 640.757 L526.365 594.224 L559.846 527.407 L561.53 519.854 L558.758 514.179 L553.261 511.532 L514.672 511.232 L515.119 374.463 L561.076 308.302 L561.704 245.697 L559.136 238.918 L553.31 235.691 L466.999 235.595 L466.675 201.708 L463.06 196.122 L456.55 194.235 L450.678 196.444 L447.527 201.934 L447.325 235.626 L365.458 235.419 L357.201 237.243 L353.146 242.018 L352.947 308.204 L399.591 376.071 L399.545 511.227 L16.382 511.807 L10.54 517.244 L10.792 525.326 L45.427 596.276 L45.453 640.815 L15.107 641.824 L10.09 648.386 L10.161 653.13 L12.077 656.96 L15.702 659.639 L20.182 660.492 L140.818 660.543 M541.872 255.307 L541.879 295.438 L372.302 295.495 L372.317 255.307 Z M381.342 315.11 L532.887 315.174 L500.984 360.219 L498.938 361.769 L492.546 362.122 L414.463 361.473 Z M419.153 381.506 L495.044 381.525 L495.002 511.259 L419.217 511.38 Z M535.941 530.93 L509.977 582.297 L62.057 582.632 L35.662 530.997 Z M506.334 602.499 L506.326 640.807 L375.303 640.791 L375.302 602.503 Z M196.046 602.507 L196.004 640.807 L65.149 640.754 L65.149 603.287 Z M355.574 602.52 L355.613 640.804 L215.732 640.762 L215.734 602.532 Z"/>
 </svg>
