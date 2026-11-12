@@ -12,7 +12,10 @@ fn main() {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     let version = git.unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").unwrap_or_default());
     println!("cargo:rustc-env=FILI_TERM_VERSION={version}");
+    // HEAD moves on checkout, the refs on commit and tag
     println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs");
+    println!("cargo:rerun-if-changed=.git/packed-refs");
 
     CxxQtBuilder::new_qml_module(
         QmlModule::new("Fili.Term")

@@ -1,6 +1,6 @@
 # Aéroport (fili-term)
 
-The Filigrane terminal (work in progress). Aéroport is its display name; the program, the commands and this repository
+The terminal of [Filigrane](https://github.com/filigrane-os/filigrane). Aéroport is its display name; the program, the commands and this repository
 keep the name `fili-term` (an `aeroport` link is installed too). Two processes:
 
 - `fili-term-daemon` (`daemon/`, Rust, no Qt): owns the ptys and the terminal state through

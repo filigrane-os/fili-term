@@ -9,7 +9,7 @@
 - Settings and theme in `~/.config/filigrane/fili-term.toml` (font size, padding, window buttons; theme keys and the
   terminal `palette`), live light/dark mode and accent of fili-theme.
 - Copy on select: a selection goes to the primary selection and to the clipboard.
-- French translation, desktop entry, icon (a prompt and an airport), Makefile.
+- French translation, desktop entry, icon (a prompt and an airport), Makefile, package.env (xbps package of Filigrane).
 
 ## V0 (spike)
 
