@@ -2,16 +2,19 @@
 //!
 //! `fili-term-daemon` (daemon/) keeps the sessions (ptys + terminal state); `fili-term` opens a window on a new session, in the
 //! window process already running if there is one (one Qt process for every window).
+mod ctl;
 mod gui;
 mod proto;
+mod window;
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: fili-term [-e COMMAND [ARGS…]] [--attach ID]\n       fili-term list\n\n\
-         Opens a terminal window; sessions live in the daemon and survive their window."
+        "usage: fili-term [-e COMMAND [ARGS…]] [--attach ID]\n       fili-term list\n       \
+         fili-term ctl [--pid PID] action NAME | actions\n\n\
+         Opens a terminal window (Aéroport); sessions live in the daemon and survive their window."
     );
     2
 }
@@ -24,6 +27,17 @@ fn main() {
             2
         }
         Some("list") => list(),
+        // Command an open window (menu of the fili-bar); never starts Qt
+        Some("ctl") => match ctl::run(&args[1..]) {
+            Ok(answer) => {
+                println!("{answer}");
+                0
+            }
+            Err(e) => {
+                eprintln!("fili-term ctl: {e}");
+                1
+            }
+        },
         Some("-h" | "--help") => usage(),
         _ => open(&args),
     };

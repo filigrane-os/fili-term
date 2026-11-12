@@ -351,6 +351,7 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "libc",
+ "serde_json",
 ]
 
 [[package]]

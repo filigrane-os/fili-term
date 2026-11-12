@@ -154,6 +154,11 @@ pub mod qobject {
         #[qproperty(QString, title)]
         #[qproperty(i32, scroll_offset, cxx_name = "scrollOffset")]
         #[qproperty(i32, history_size, cxx_name = "historySize")]
+        /// Columns and rows of the grid
+        #[qproperty(i32, columns)]
+        #[qproperty(i32, lines)]
+        /// "fg bg selection cursor c0 … c15" (#rrggbb), from the theme
+        #[qproperty(QString, colors)]
         type TerminalView = super::TerminalViewRust;
 
         /// The shell ended (status), or the daemon went away (-1)
@@ -168,6 +173,7 @@ pub mod qobject {
         fn paste(self: Pin<&mut TerminalView>);
         #[qinvokable]
         #[cxx_name = "scrollPage"]
+        /// -2 top of the history, -1 page up, 1 page down, 0 or 2 back to the bottom
         fn scroll_page(self: Pin<&mut TerminalView>, direction: i32);
         /// Hang the session up (its tab or window closes)
         #[qinvokable]
@@ -308,14 +314,54 @@ mod flags {
     pub const SPACERS: u16 = WIDE_CHAR_SPACER | LEADING_WIDE_CHAR_SPACER;
 }
 
-// Palette of the foot theme shipped with Filigrane (dark)
-const ANSI: [u32; 16] = [
-    0x2d3744, 0xc98f93, 0xa3bfa8, 0xd2bf92, 0x9dbbd6, 0xb3a8c9, 0x95c0c6, 0xa9b8c8, 0x5f7894, 0xd9a5a9, 0xb8d0bc, 0xe0d0a8,
-    0xb9d0e4, 0xc6bdd8, 0xadd2d7, 0xdbe7f4,
-];
-const FOREGROUND: u32 = 0xdbe7f4;
-const BACKGROUND: u32 = 0x1c222b;
-const SELECTION: u32 = 0x3c4858;
+/// Colours of the terminal: the 16 ANSI colours, text, background, selection and cursor. Set by QML (`colors`, from
+/// the theme: FiliTheme.terminalColors); the defaults are the dark palette of Filigrane's foot theme.
+#[derive(Clone, Copy)]
+struct Pal {
+    ansi: [u32; 16],
+    fg: u32,
+    bg: u32,
+    selection: u32,
+    cursor: u32,
+}
+
+impl Default for Pal {
+    fn default() -> Self {
+        Self {
+            ansi: [
+                0x2d3744, 0xc98f93, 0xa3bfa8, 0xd2bf92, 0x9dbbd6, 0xb3a8c9, 0x95c0c6, 0xa9b8c8, 0x5f7894, 0xd9a5a9, 0xb8d0bc,
+                0xe0d0a8, 0xb9d0e4, 0xc6bdd8, 0xadd2d7, 0xdbe7f4,
+            ],
+            fg: 0xdbe7f4,
+            bg: 0x1c222b,
+            selection: 0x3c4858,
+            cursor: 0xdbe7f4,
+        }
+    }
+}
+
+impl Pal {
+    /// "fg bg selection cursor c0 … c15"; None unless all 20 colours are valid
+    fn parse(text: &str) -> Option<Self> {
+        // #rgb, #rrggbb or #aarrggbb (alpha dropped: the terminal is opaque)
+        let hex = |c: &str| -> Option<u32> {
+            let h = c.strip_prefix('#')?;
+            let v = u32::from_str_radix(h, 16).ok()?;
+            match h.len() {
+                3 => Some(((v >> 8 & 0xf) * 0x11) << 16 | ((v >> 4 & 0xf) * 0x11) << 8 | (v & 0xf) * 0x11),
+                6 | 8 => Some(v & 0xff_ffff),
+                _ => None,
+            }
+        };
+        let v: Vec<u32> = text.split_whitespace().map(hex).collect::<Option<_>>()?;
+        if v.len() != 20 {
+            return None;
+        }
+        let mut ansi = [0; 16];
+        ansi.copy_from_slice(&v[4..]);
+        Some(Self { ansi, fg: v[0], bg: v[1], selection: v[2], cursor: v[3] })
+    }
+}
 
 // Qt::Key values and modifier bits
 mod key {
@@ -352,9 +398,9 @@ fn dim(v: u32) -> u32 {
 }
 
 /// Colour of the 256-colour palette
-fn palette(i: u32) -> u32 {
+fn palette(i: u32, pal: &Pal) -> u32 {
     match i {
-        0..=15 => ANSI[i as usize],
+        0..=15 => pal.ansi[i as usize],
         16..=231 => {
             const STEPS: [u32; 6] = [0, 95, 135, 175, 215, 255];
             let i = i - 16;
@@ -368,17 +414,17 @@ fn palette(i: u32) -> u32 {
 }
 
 /// Wire colour (see daemon `color`) → 0xRRGGBB
-fn resolve(c: u32) -> u32 {
+fn resolve(c: u32, pal: &Pal) -> u32 {
     let (tag, v) = (c >> 24, c & 0xff_ffff);
     match tag {
         0 => v,
-        2 => palette(v & 0xff),
+        2 => palette(v & 0xff, pal),
         _ => match v {
-            0..=15 => ANSI[v as usize],
-            257 => BACKGROUND,
-            259..=266 => dim(ANSI[(v - 259) as usize]),
-            268 => dim(FOREGROUND),
-            _ => FOREGROUND,
+            0..=15 => pal.ansi[v as usize],
+            257 => pal.bg,
+            259..=266 => dim(pal.ansi[(v - 259) as usize]),
+            268 => dim(pal.fg),
+            _ => pal.fg,
         },
     }
 }
@@ -452,6 +498,10 @@ pub struct TerminalViewRust {
     title: QString,
     scroll_offset: i32,
     history_size: i32,
+    columns: i32,
+    lines: i32,
+    colors: QString,
+    pal: Pal,
 
     conn: Option<Conn>,
     complete: bool,
@@ -496,6 +546,10 @@ impl Default for TerminalViewRust {
             title: QString::default(),
             scroll_offset: 0,
             history_size: 0,
+            columns: 0,
+            lines: 0,
+            colors: QString::default(),
+            pal: Pal::default(),
             conn: None,
             complete: false,
             need_ack: false,
@@ -547,7 +601,16 @@ impl cxx_qt::Constructor<()> for qobject::TerminalView {
         all.set_flag(MouseButton::RightButton, true).set_flag(MouseButton::MiddleButton, true);
         self.as_mut().set_accepted_mouse_buttons(all);
         self.as_mut().set_opaque_painting(true);
-        self.as_mut().set_fill_color(&rgb(BACKGROUND));
+        self.as_mut().set_fill_color(&rgb(Pal::default().bg));
+        self.as_mut()
+            .on_colors_changed(|mut v| {
+                if let Some(pal) = Pal::parse(&v.colors.to_string()) {
+                    v.as_mut().rust_mut().pal = pal;
+                    v.as_mut().set_fill_color(&rgb(pal.bg));
+                    v.mark_all();
+                }
+            })
+            .release();
         self.as_mut().set_active_focus_on_tab(true);
         self.as_mut().measure();
         self.as_mut().on_font_family_changed(|v| v.measure()).release();
@@ -858,6 +921,8 @@ impl qobject::TerminalView {
         let mut r = self.as_mut().rust_mut();
         r.want_cols = cols;
         r.want_rows = rows;
+        self.as_mut().set_columns(cols as i32);
+        self.as_mut().set_lines(rows as i32);
         true
     }
 
@@ -906,8 +971,8 @@ impl qobject::TerminalView {
     /// Effective (fg, bg) of a cell
     fn cell_colors(&self, line: i32, col: usize) -> (u32, u32) {
         let c = &self.cells[line as usize * self.cols + col];
-        let mut fg = resolve(c.fg);
-        let mut bg = resolve(c.bg);
+        let mut fg = resolve(c.fg, &self.pal);
+        let mut bg = resolve(c.bg, &self.pal);
         if c.flags & flags::DIM != 0 {
             fg = dim(fg);
         }
@@ -915,7 +980,7 @@ impl qobject::TerminalView {
             std::mem::swap(&mut fg, &mut bg);
         }
         if self.in_selection(col as i32, line) {
-            bg = SELECTION;
+            bg = self.pal.selection;
         }
         if c.flags & flags::HIDDEN != 0 {
             fg = bg;
@@ -947,7 +1012,7 @@ impl qobject::TerminalView {
             while end < cols && self.cell_colors(line, end).1 == bg {
                 end += 1;
             }
-            if bg != BACKGROUND {
+            if bg != self.pal.bg {
                 let x0 = if col == 0 { 0.0 } else { (pad + col as i32 * cw) as f64 };
                 let x1 = if end == cols { width } else { (pad + end as i32 * cw) as f64 };
                 p.as_mut().fill_rect(&QRectF::new(x0, y as f64, x1 - x0, ch as f64), &rgb(bg));
@@ -1038,7 +1103,7 @@ impl qobject::TerminalView {
             let c = self.cells[base + cur_col];
             let w = if c.flags & flags::WIDE_CHAR != 0 { 2 * cw } else { cw };
             let x = pad + cur_col as i32 * cw;
-            let fg = rgb(FOREGROUND);
+            let fg = rgb(self.pal.cursor);
             if !self.focused || self.cur_shape == 4 {
                 p.as_mut().set_pen(&QPen::from(&fg));
                 p.as_mut().draw_rect_f(&QRectF::new(x as f64 + 0.5, y as f64 + 0.5, (w - 1) as f64, (ch - 1) as f64));
@@ -1046,7 +1111,7 @@ impl qobject::TerminalView {
                 p.as_mut().fill_rect(&QRectF::new(x as f64, y as f64, w as f64, ch as f64), &fg);
                 if c.c != ' ' && c.c != '\0' {
                     p.as_mut().set_font(font_for(c.flags & (flags::BOLD | flags::ITALIC)));
-                    p.as_mut().set_pen(&QPen::from(&rgb(BACKGROUND)));
+                    p.as_mut().set_pen(&QPen::from(&rgb(self.pal.bg)));
                     p.as_mut().draw_text(&QPoint::new(x, y + ascent), &QString::from(c.c.to_string().as_str()));
                 }
             } else if self.cur_shape == 2 {
@@ -1061,11 +1126,11 @@ impl qobject::TerminalView {
             let text = QString::from(self.preedit.as_str());
             let w = fonts.metrics.horizontal_advance(&text, -1);
             let x = (pad + self.cur_col * cw) as f64;
-            p.as_mut().fill_rect(&QRectF::new(x, y as f64, w, ch as f64), &rgb(BACKGROUND));
+            p.as_mut().fill_rect(&QRectF::new(x, y as f64, w, ch as f64), &rgb(self.pal.bg));
             p.as_mut().set_font(&fonts.faces[0]);
-            p.as_mut().set_pen(&QPen::from(&rgb(FOREGROUND)));
+            p.as_mut().set_pen(&QPen::from(&rgb(self.pal.fg)));
             p.as_mut().draw_text(&QPoint::new(x as i32, y + ascent), &text);
-            p.as_mut().fill_rect(&QRectF::new(x, (y + ascent + 2) as f64, w, 1.0), &rgb(FOREGROUND));
+            p.as_mut().fill_rect(&QRectF::new(x, (y + ascent + 2) as f64, w, 1.0), &rgb(self.pal.fg));
         }
     }
 
@@ -1267,7 +1332,8 @@ impl qobject::TerminalView {
             clip = QRectF::new(0.0, 0.0, w, h);
         }
         self.as_mut().rust_mut().full = false;
-        p.as_mut().fill_rect(&clip, &rgb(BACKGROUND));
+        let bg = rgb(self.pal.bg);
+        p.as_mut().fill_rect(&clip, &bg);
         let (pad, ch) = (self.padding as f64, self.ch as f64);
         let first = (((clip.y() - pad) / ch).floor() as i32).max(0);
         let last = (((clip.y() + clip.height() - pad) / ch).floor() as i32).min(self.rows as i32 - 1);
@@ -1551,7 +1617,13 @@ impl qobject::TerminalView {
     }
 
     fn scroll_page(self: Pin<&mut Self>, direction: i32) {
-        let mut b = vec![if direction < 0 { 1u8 } else { 2 }];
+        let kind = match direction {
+            ..=-2 => 3u8,
+            -1 => 1,
+            1 => 2,
+            _ => 4,
+        };
+        let mut b = vec![kind];
         proto::put_u32(&mut b, 0);
         self.send(proto::SCROLL, &b);
     }
@@ -1568,5 +1640,24 @@ impl qobject::TerminalView {
         } else {
             self.set_texture_size(&QSize::new(1, 1));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pal;
+
+    #[test]
+    fn colours_of_the_theme() {
+        let mut text = String::from("#dbe7f4 #1c222b #3c4858 #fff");
+        for _ in 0..16 {
+            text.push_str(" #ff102030");
+        }
+        let pal = Pal::parse(&text).unwrap();
+        assert_eq!((pal.fg, pal.bg, pal.selection, pal.cursor), (0xdbe7f4, 0x1c222b, 0x3c4858, 0xffffff));
+        assert_eq!(pal.ansi[15], 0x102030);
+        // Missing or invalid colours keep the palette as it is
+        assert!(Pal::parse("#dbe7f4 #1c222b").is_none());
+        assert!(Pal::parse(&text.replace("#fff", "white")).is_none());
     }
 }

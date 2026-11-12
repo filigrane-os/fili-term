@@ -1,0 +1,102 @@
+# fili-term (Aéroport) default theme (embedded in the binary at build time).
+#
+# To customize every Filigrane app at once, put lines in ~/.config/filigrane/theme.toml (same sections).
+# To customize fili-term only, copy only the lines you want to change into
+#   ~/.config/filigrane/fili-term.toml
+# under the same section. Your file overrides these defaults key by key; anything you
+# leave out keeps its value from here. Read once per window opening.
+#
+# Lookup order for a key (first one found wins), each layer trying its mode section before its [theme]:
+#   fili-term.toml  >  theme.toml (global)  >  these defaults
+# So a key set in [theme] applies to both modes, and a mode section overrides it for that mode only.
+#
+# Colors: "#rgb", "#rrggbb" or "#aarrggbb". Sizes and spacings: integers (pixels).
+# An invalid value is ignored (the default is kept).
+
+# Settings shared by both modes. Any key from the mode sections below may also be put here (and any key
+# from here may be put in a mode section).
+[theme]
+# Fonts
+font = "Jost"
+mono = "JetBrains Mono"
+icons = "Fili Icons"
+# Type scale (px)
+size = 14
+size_list = 13
+size_small = 12
+size_label = 11
+size_title = 18
+# Weight of emphasized text (400 regular, 600 semibold, 700 bold)
+weight_accent = 600
+# Corner radii (px): marks and gauges, controls and rows, windows
+radius_mark = 2
+radius_control = 6
+radius_window = 10
+# Width of borders (px)
+border_width = 1
+# Spacing scale (px)
+space_1 = 4
+space_2 = 8
+space_3 = 12
+space_4 = 16
+space_5 = 20
+space_6 = 24
+# Layout (px)
+row_height = 24
+side_row_height = 28
+icon_size = 16
+margin = 24
+toolbar_height = 44
+status_height = 28
+sidebar_width = 200
+tab_bar_height = 40
+tab_height = 28
+
+# Dark mode (default)
+[theme.dark]
+background = "#1c222b"        # window background
+background_deep = "#181d25"   # recessed areas (preview, results)
+surface = "#232b36"           # fields, panels, menus
+surface_hover = "#2d3744"     # hovered row or button, selected sidebar item
+surface_active = "#3c4858"    # pressed button, text selection
+border = "#3c4858"            # outlines of fields, menus, cards
+muted = "#5f7894"             # secondary glyphs and disabled text
+text_secondary = "#a9b8c8"    # secondary text
+text = "#dbe7f4"              # main text
+warning = "#d2bf92"
+danger = "#c98f93"
+success = "#a3bfa8"
+# accent = "#9dbbd6"          # fixed accent; unset = follows `fili-theme accent` (see [theme.accents])
+# accent_bright = "#b9d0e4"
+# Terminal: the 16 ANSI colours (regular 0-7, bright 0-7) on one line; text, background and selection are `text`,
+# `background` and `surface_active`, the cursor is the accent colour
+palette = ["#2d3744", "#c98f93", "#a3bfa8", "#d2bf92", "#9dbbd6", "#b3a8c9", "#95c0c6", "#a9b8c8", "#5f7894", "#d9a5a9", "#b8d0bc", "#e0d0a8", "#b9d0e4", "#c6bdd8", "#add2d7", "#dbe7f4"]
+
+# Light mode (`fili-theme light`): the names keep their role
+[theme.light]
+background = "#f3f1ec"
+background_deep = "#f8f7f3"
+surface = "#e9e6df"
+surface_hover = "#dfdbd2"
+surface_active = "#cdc8bd"
+border = "#cdc8bd"
+muted = "#5f7894"
+text_secondary = "#4f5e70"
+text = "#1c222b"
+warning = "#80662b"
+danger = "#9a4f55"
+success = "#4a7354"
+# accent = "#3f5a78"
+# accent_bright = "#2f4a66"
+palette = ["#1c222b", "#9a4f55", "#4a7354", "#80662b", "#3f5a78", "#6b5b8a", "#3d6f75", "#8a94a0", "#5f7894", "#b0636a", "#5c8766", "#94793a", "#5f7894", "#7f70a0", "#4f858b", "#3c4858"]
+
+# Accent colors chosen with `fili-theme accent <name>`: [dark, dark bright, light, light bright].
+# No accent chosen (or an unknown name) means `default`: sand in dark mode, slate in light mode.
+[theme.accents]
+default = ["#d2bf92", "#e0d1ab", "#4f6884", "#3d5470"]
+voile = ["#9dbbd6", "#b9d0e4", "#3f5a78", "#2f4a66"]
+ardoise = ["#7f9ab6", "#9ab2ca", "#4f6884", "#3d5470"]
+sauge = ["#a3bfa8", "#bcd3c0", "#4a7354", "#385a42"]
+sable = ["#d2bf92", "#e0d1ab", "#80662b", "#654f1f"]
+cendre = ["#c98f93", "#d9a8ab", "#9a4f55", "#7d3c42"]
+brume = ["#dbe7f4", "#f3f1ec", "#4f5e70", "#1c222b"]

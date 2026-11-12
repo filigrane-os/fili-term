@@ -1,6 +1,10 @@
 //! The window process: one Qt Quick application for every fili-term window.
+pub mod app;
+pub mod i18n;
 pub mod instance;
+pub mod settings;
 pub mod terminal;
+pub mod theme;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 
@@ -16,10 +20,11 @@ pub fn run(request: &str) -> i32 {
     }
     *instance::FIRST_REQUEST.lock().unwrap() = Some(request.to_string());
     let mut app = QGuiApplication::new();
+    // Wayland app-id (niri rules, fili-term.desktop, menu of the fili-bar)
     QGuiApplication::set_desktop_file_name(&QString::from("fili-term"));
     let mut engine = QQmlApplicationEngine::new();
     if let Some(engine) = engine.as_mut() {
-        engine.load(&QUrl::from("qrc:/qt/qml/Fili/Term/qml/Main.qml"));
+        engine.load(&QUrl::from("qrc:/qt/qml/Fili/Term/qml/App.qml"));
     }
     match app.as_mut() {
         Some(app) => app.exec(),

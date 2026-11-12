@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Aéroport
+GenericName=Terminal
+GenericName[fr]=Terminal
+Comment=Use the command line
+Comment[fr]=Utiliser la ligne de commande
+Exec=fili-term
+Icon=fili-term
+Keywords=terminal;shell;console;command;prompt;tty;aeroport;
+Keywords[fr]=terminal;shell;console;commande;invite;aéroport;
+Categories=System;TerminalEmulator;
+StartupWMClass=fili-term
+Terminal=false
