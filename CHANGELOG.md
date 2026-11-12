@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (V1)
+## v1.0.0 (2026-11-12)
 
 - Display name Aéroport (About card: "Also known as fili-term").
 - Window anatomy of Filigrane: header with title, new tab, Window panel (niri actions) and Close; tab row from two

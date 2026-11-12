@@ -1,6 +1,6 @@
 [package]
 name = "fili-term"
-version = "0.0.1"
+version = "1.0.0"
 edition = "2024"
 description = "fili-term: the Filigrane terminal, a small session daemon (Rust, alacritty_terminal) and a Qt Quick window"
 license = "GPL-3.0-or-later"
