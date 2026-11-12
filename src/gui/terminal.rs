@@ -717,6 +717,12 @@ fn clipboard_text(mode: ClipboardMode) -> String {
     unsafe { (*cb).text(mode) }.to_string()
 }
 
+/// A finished selection goes to the primary selection and to the clipboard (copy on select)
+fn publish_selection(text: &str) {
+    set_clipboard_text(text, ClipboardMode::Selection);
+    set_clipboard_text(text, ClipboardMode::Clipboard);
+}
+
 fn set_clipboard_text(text: &str, mode: ClipboardMode) {
     let cb = qobject::GuiApplication::clipboard();
     if cb.is_null() {
@@ -1521,7 +1527,7 @@ impl qobject::TerminalView {
             return;
         }
         if self.selecting && self.has_selection {
-            set_clipboard_text(&self.selection_text(), ClipboardMode::Selection);
+            publish_selection(&self.selection_text());
         }
         self.as_mut().rust_mut().selecting = false;
     }
@@ -1559,7 +1565,7 @@ impl qobject::TerminalView {
             r.has_selection = true;
             r.selecting = false;
         }
-        set_clipboard_text(&self.selection_text(), ClipboardMode::Selection);
+        publish_selection(&self.selection_text());
         self.mark_all();
     }
 

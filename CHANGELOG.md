@@ -8,7 +8,8 @@
 - Menu of the fili-bar through `fili-term ctl [--pid PID] action NAME` (fallback appmenu/fili-term.json in Filigrane).
 - Settings and theme in `~/.config/filigrane/fili-term.toml` (font size, padding, window buttons; theme keys and the
   terminal `palette`), live light/dark mode and accent of fili-theme.
-- French translation, desktop entry, icon (placeholder), Makefile.
+- Copy on select: a selection goes to the primary selection and to the clipboard.
+- French translation, desktop entry, icon (a prompt and an airport), Makefile.
 
 ## V0 (spike)
 
