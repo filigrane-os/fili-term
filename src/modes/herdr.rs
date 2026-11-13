@@ -162,7 +162,7 @@ impl Adapter {
                 Ok(In::Lost(g)) if g == self.generation => return true,
                 Ok(In::Action(a)) => {
                     if let Err(e) = self.act(req, &a) {
-                        eprintln!("fili-term-daemon: herdr: {e}");
+                        self.ctx.reply(json!({"op": "error", "message": e}).to_string());
                     }
                     dirty.get_or_insert_with(|| Instant::now() + SETTLE);
                 }
@@ -241,11 +241,14 @@ impl Adapter {
         }
     }
 
+    /// An action of the window (see the actions of mod.rs and the context menus of Main.qml)
     fn act(&mut self, req: &mut Requests, a: &Value) -> Result<(), String> {
         let id = a["id"].as_str().unwrap_or("");
+        let label = || a["label"].as_str().map(str::trim).filter(|l| !l.is_empty());
         let (method, params) = match (a["op"].as_str().unwrap_or(""), a["section"].as_str().unwrap_or("")) {
             ("tab", _) => ("tab.focus", json!({"tab_id": id})),
             ("close-tab", _) => ("tab.close", json!({"tab_id": id})),
+            ("rename-tab", _) => ("tab.rename", json!({"tab_id": id, "label": label().ok_or("empty name")?})),
             ("new-tab", _) => {
                 let snapshot = req.call("session.snapshot", json!({}))?;
                 let ws = snapshot["snapshot"]["focused_workspace_id"].clone();
@@ -254,6 +257,30 @@ impl Adapter {
             ("select", "workspaces") => ("workspace.focus", json!({"workspace_id": id})),
             ("select", "agents") => ("agent.focus", json!({"target": id})),
             ("new", "workspaces") => ("workspace.create", json!({"focus": true})),
+            ("rename", "workspaces") => ("workspace.rename", json!({"workspace_id": id, "label": label().ok_or("empty name")?})),
+            ("close", "workspaces") => ("workspace.close", json!({"workspace_id": id, "close_group": a["group"].as_bool().unwrap_or(false)})),
+            // Worktrees of a workspace's repository: listed for the menu, a new one on a branch, one opened, one removed
+            ("worktrees", _) => {
+                let r = req.call("worktree.list", json!({"workspace_id": id}))?;
+                self.ctx.reply(json!({"op": "worktrees", "id": id, "items": r["worktrees"]}).to_string());
+                return Ok(());
+            }
+            ("new-worktree", _) => (
+                "worktree.create",
+                json!({"workspace_id": id, "branch": label().ok_or("empty branch name")?, "focus": true}),
+            ),
+            ("open-worktree", _) => ("worktree.open", json!({"workspace_id": id, "path": a["path"], "focus": true})),
+            ("remove-worktree", _) => ("worktree.remove", json!({"workspace_id": id, "force": a["force"].as_bool().unwrap_or(false)})),
+            ("rename", "panes") => ("pane.rename", json!({"pane_id": id, "label": label()})),
+            ("close", "panes") => ("pane.close", json!({"pane_id": id})),
+            ("split", _) => (
+                "pane.split",
+                json!({"target_pane_id": id, "direction": a["direction"].as_str().unwrap_or("right"), "focus": true}),
+            ),
+            ("move-tab", _) => ("tab.move", json!({"tab_id": id, "insert_index": a["index"].as_u64().unwrap_or(0)})),
+            ("reload-config", _) => ("server.reload_config", json!({})),
+            ("swap", _) => ("pane.swap", json!({"source_pane_id": id, "target_pane_id": a["with"]})),
+            ("rename", "agents") => ("agent.rename", json!({"target": id, "name": label()})),
             (op, section) => return Err(format!("unknown action {op} {section}")),
         };
         req.call(method, params).map(|_| ())
@@ -271,6 +298,184 @@ impl Adapter {
             self.ctx.notice(n);
         }
     }
+}
+
+/// herdr's key bindings (its `[keys]` defaults, 0.9.5): Aéroport shows herdr's panes without herdr's client, so it
+/// answers them itself in herdr's tabs. Actions without an equivalent here (help, zoom, resize, edit_scrollback…) are left
+/// out.
+const KEYS: &[(&str, &str)] = &[
+    ("settings", "prefix+s"),
+    ("detach", "prefix+q"),
+    ("reload_config", "prefix+shift+r"),
+    ("open_notification_target", "prefix+o"),
+    ("workspace_picker", "prefix+w"),
+    ("goto", "prefix+g"),
+    ("new_workspace", "prefix+shift+n"),
+    ("new_worktree", "prefix+shift+g"),
+    ("open_worktree", ""),
+    ("remove_worktree", ""),
+    ("rename_workspace", "prefix+shift+w"),
+    ("close_workspace", "prefix+shift+d"),
+    ("previous_workspace", ""),
+    ("next_workspace", ""),
+    ("previous_agent", ""),
+    ("next_agent", ""),
+    ("focus_agent", ""),
+    ("new_tab", "prefix+c"),
+    ("rename_tab", "prefix+shift+t"),
+    ("previous_tab", "prefix+p"),
+    ("next_tab", "prefix+n"),
+    ("move_tab_previous", ""),
+    ("move_tab_next", ""),
+    ("switch_tab", "prefix+1..9"),
+    ("switch_workspace", ""),
+    ("close_tab", "prefix+shift+x"),
+    ("rename_pane", "prefix+shift+p"),
+    ("focus_pane_left", "prefix+h"),
+    ("focus_pane_down", "prefix+j"),
+    ("focus_pane_up", "prefix+k"),
+    ("focus_pane_right", "prefix+l"),
+    ("cycle_pane_next", "prefix+tab"),
+    ("cycle_pane_previous", "prefix+shift+tab"),
+    ("last_pane", ""),
+    ("split_vertical", "prefix+v"),
+    ("split_horizontal", "prefix+minus"),
+    ("close_pane", "prefix+x"),
+    ("toggle_sidebar", "prefix+b"),
+];
+
+/// herdr's config file: HERDR_CONFIG_PATH, else config.toml in its folder of the configuration
+pub fn config_path() -> PathBuf {
+    if let Some(p) = std::env::var_os("HERDR_CONFIG_PATH").filter(|p| !p.is_empty()) {
+        return PathBuf::from(p);
+    }
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|c| !c.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"));
+    base.join("herdr").join("config.toml")
+}
+
+/// One key of herdr's syntax ("ctrl+b", "shift+x", "minus", "?") as Qt writes it ("Ctrl+B", "Shift+X", "-", "?")
+fn qt_key(spec: &str) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let tokens: Vec<&str> = spec.split('+').collect();
+    let (mods, key) = tokens.split_at(tokens.len().checked_sub(1)?);
+    for m in mods {
+        parts.push(
+            match m.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => "Ctrl",
+                "shift" => "Shift",
+                "alt" | "option" => "Alt",
+                "cmd" | "super" | "meta" => "Meta",
+                _ => return None,
+            }
+            .to_string(),
+        );
+    }
+    let k = key[0].to_ascii_lowercase();
+    let named = match k.as_str() {
+        "" => return None,
+        "minus" => "-",
+        "plus" => "+",
+        "comma" => ",",
+        "period" | "dot" => ".",
+        "slash" => "/",
+        "backslash" => "\\",
+        "backtick" | "grave" => "`",
+        "ampersand" => "&",
+        "question" => "?",
+        "tab" => "Tab",
+        "enter" | "return" => "Return",
+        "esc" | "escape" => "Esc",
+        "space" => "Space",
+        "left" => "Left",
+        "right" => "Right",
+        "up" => "Up",
+        "down" => "Down",
+        "home" => "Home",
+        "end" => "End",
+        "pageup" => "PgUp",
+        "pagedown" => "PgDown",
+        "backspace" => "Backspace",
+        "delete" => "Del",
+        _ => "",
+    };
+    let name = if !named.is_empty() {
+        named.to_string()
+    } else if k.len() > 1 && k.starts_with('f') && k[1..].parse::<u8>().is_ok() {
+        k.to_ascii_uppercase()
+    } else if k.chars().count() == 1 {
+        k.to_ascii_uppercase()
+    } else {
+        return None;
+    };
+    parts.push(name);
+    Some(parts.join("+"))
+}
+
+/// A binding of herdr ("prefix+shift+x", "ctrl+alt+n", "prefix+1..9") as Qt key sequences, with the index for a range
+fn qt_binding(binding: &str, prefix: &str) -> Vec<(Option<u32>, String)> {
+    let binding = binding.trim();
+    let (lead, rest) = match binding.strip_prefix("prefix+") {
+        Some(rest) => (qt_key(prefix).map(|p| format!("{p}, ")), rest),
+        None => (Some(String::new()), binding),
+    };
+    let Some(lead) = lead else { return Vec::new() };
+    // An indexed range: the last part is "1..9"
+    if let Some((head, range)) = rest.rsplit_once('+').map(|(h, r)| (Some(h), r)).or(Some((None, rest))).filter(|(_, r)| r.contains("..")) {
+        let (a, b) = range.split_once("..").unwrap_or(("", ""));
+        let (Ok(a), Ok(b)) = (a.parse::<u32>(), b.parse::<u32>()) else { return Vec::new() };
+        return (a..=b.min(9))
+            .filter_map(|n| qt_key(&head.map_or(n.to_string(), |h| format!("{h}+{n}"))).map(|k| (Some(n), format!("{lead}{k}"))))
+            .collect();
+    }
+    qt_key(rest).map(|k| vec![(None, format!("{lead}{k}"))]).unwrap_or_default()
+}
+
+/// herdr's bindings for the window, JSON [{"action": "new_tab", "keys": ["Ctrl+B, C"]}, {"action": "switch_tab:1", …}]:
+/// the defaults, then the `[keys]` section of herdr's config (an empty value unbinds)
+pub fn keys_json(config: &str) -> String {
+    let mut section = String::new();
+    let mut set: HashMap<String, String> = HashMap::new();
+    for line in config.lines() {
+        let line = line.split(" #").next().unwrap_or("").trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.trim_matches(|c| c == '[' || c == ']').trim().to_string();
+            continue;
+        }
+        if section == "keys" {
+            if let Some((k, v)) = line.split_once('=') {
+                set.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    let prefix = set.get("prefix").cloned().unwrap_or_else(|| "ctrl+b".into());
+    let mut out: Vec<Value> = Vec::new();
+    for (action, default) in KEYS {
+        let binding = set.get(*action).cloned().unwrap_or_else(|| default.to_string());
+        let mut indexed: std::collections::BTreeMap<u32, Vec<String>> = std::collections::BTreeMap::new();
+        let mut plain: Vec<String> = Vec::new();
+        // Alternatives: herdr accepts a list in some bindings; a comma never appears in a single one here
+        for b in binding.split('|').filter(|b| !b.trim().is_empty()) {
+            for (n, k) in qt_binding(b, &prefix) {
+                match n {
+                    Some(n) => indexed.entry(n).or_default().push(k),
+                    None => plain.push(k),
+                }
+            }
+        }
+        if !plain.is_empty() {
+            out.push(json!({"action": action, "keys": plain}));
+        }
+        for (n, keys) in indexed {
+            out.push(json!({"action": format!("{action}:{n}"), "keys": keys}));
+        }
+    }
+    Value::Array(out).to_string()
 }
 
 /// Socket of a herdr client running as `pid` (its own options and environment), else the default one of this process'
@@ -422,13 +627,29 @@ fn state_of(snap: &Value, before: Option<&HashMap<String, String>>) -> (String, 
         })
         .collect();
 
-    let ws_items: Vec<Value> = workspaces
+    // Worktrees of one repository stay together, the linked ones under the main checkout (as in herdr's sidebar)
+    let repo = |w: &Value| w["worktree"]["repo_key"].as_str().map(str::to_string);
+    let linked = |w: &Value| w["worktree"]["is_linked_worktree"].as_bool().unwrap_or(false);
+    let mut ordered: Vec<&Value> = Vec::new();
+    for w in &workspaces {
+        if ordered.iter().any(|o| std::ptr::eq(*o, *w)) || (linked(w) && workspaces.iter().any(|m| !linked(m) && repo(m) == repo(w))) {
+            continue;
+        }
+        ordered.push(w);
+        if let Some(r) = repo(w).filter(|_| !linked(w)) {
+            ordered.extend(workspaces.iter().filter(|o| linked(o) && repo(o).as_deref() == Some(r.as_str())));
+        }
+    }
+    let ws_items: Vec<Value> = ordered
         .iter()
         .map(|w| {
+            let group = repo(w).is_some_and(|r| workspaces.iter().filter(|o| repo(o).as_deref() == Some(r.as_str())).count() > 1);
             json!({
                 "id": w["workspace_id"], "label": text(&w["label"]).map_or_else(|| w["number"].to_string(), str::to_string),
                 "detail": w["tab_count"].as_u64().filter(|n| *n > 1).map(|n| n.to_string()).unwrap_or_default(),
                 "status": w["agent_status"], "active": w["workspace_id"] == focused_ws,
+                "indent": if linked(w) && ordered.iter().any(|m| !linked(m) && repo(m) == repo(w)) { 1 } else { 0 },
+                "repo": w["worktree"].is_object(), "linked": linked(w), "group": group,
             })
         })
         .collect();
@@ -453,7 +674,7 @@ fn state_of(snap: &Value, before: Option<&HashMap<String, String>>) -> (String, 
                 }
             }
             statuses.insert(pane.to_string(), status.to_string());
-            json!({"id": pane, "label": label, "detail": place, "status": status, "active": pane == focused_pane})
+            json!({"id": pane, "label": label, "detail": place, "status": status, "active": pane == focused_pane, "workspace": a["workspace_id"]})
         })
         .collect();
 
@@ -504,6 +725,41 @@ mod tests {
         "version":"0.9.5",
         "workspaces":[{"active_tab_id":"w2:t1","agent_status":"idle","focused":false,"label":"web","number":2,"pane_count":1,"tab_count":1,"workspace_id":"w2"},
                       {"active_tab_id":"w1:t1","agent_status":"working","focused":true,"label":"demo","number":1,"pane_count":2,"tab_count":2,"workspace_id":"w1"}]}"#;
+
+    #[test]
+    fn key_bindings() {
+        let v: Value = serde_json::from_str(&keys_json("")).unwrap();
+        let find = |a: &str| v.as_array().unwrap().iter().find(|x| x["action"] == a).map(|x| x["keys"].clone());
+        assert_eq!(find("new_tab"), Some(json!(["Ctrl+B, C"])));
+        assert_eq!(find("close_tab"), Some(json!(["Ctrl+B, Shift+X"])));
+        assert_eq!(find("split_horizontal"), Some(json!(["Ctrl+B, -"])));
+        assert_eq!(find("cycle_pane_previous"), Some(json!(["Ctrl+B, Shift+Tab"])));
+        assert_eq!(find("switch_tab:3"), Some(json!(["Ctrl+B, 3"])));
+        assert_eq!(find("open_worktree"), None);
+        let user = "[ui]\nnew_tab = \"x\"\n[keys]\nprefix = \"ctrl+a\"\nnew_tab = \"ctrl+alt+t\" # direct\nclose_tab = \"\"\nswitch_workspace = \"prefix+shift+1..9\"\n";
+        let v: Value = serde_json::from_str(&keys_json(user)).unwrap();
+        let find = |a: &str| v.as_array().unwrap().iter().find(|x| x["action"] == a).map(|x| x["keys"].clone());
+        assert_eq!(find("new_tab"), Some(json!(["Ctrl+Alt+T"])));
+        assert_eq!(find("close_tab"), None);
+        assert_eq!(find("previous_tab"), Some(json!(["Ctrl+A, P"])));
+        assert_eq!(find("switch_workspace:2"), Some(json!(["Ctrl+A, Shift+2"])));
+    }
+
+    #[test]
+    fn worktrees_stay_with_their_repository() {
+        let snap: Value = serde_json::from_str(r#"{"agents":[],"panes":[],"tabs":[],"layouts":[],"focused_workspace_id":"w1","workspaces":[
+            {"workspace_id":"w1","number":1,"label":"api","worktree":{"repo_key":"r","is_linked_worktree":false}},
+            {"workspace_id":"w2","number":2,"label":"web"},
+            {"workspace_id":"w3","number":3,"label":"api-fix","worktree":{"repo_key":"r","is_linked_worktree":true}}]}"#).unwrap();
+        let (state, _, _) = state_of(&snap, None);
+        let s: Value = serde_json::from_str(&state).unwrap();
+        let items = s["sections"][0]["items"].as_array().unwrap();
+        let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["w1", "w3", "w2"]);
+        assert_eq!(items[1]["indent"], 1);
+        assert_eq!(items[0]["group"], true);
+        assert_eq!(items[2]["group"], false);
+    }
 
     #[test]
     fn state_from_snapshot() {

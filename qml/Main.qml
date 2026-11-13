@@ -31,7 +31,7 @@ Window {
     property bool showHeader: Aeroport.windowPart("header")
     property bool showFooter: Aeroport.windowPart("footer")
     readonly property bool headerShown: showHeader
-    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted
+    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || asking !== null || error !== ""
     Connections {
         target: Aeroport
         function onWindowChanged() {
@@ -228,17 +228,214 @@ Window {
         if (tabs.length === 0 && !st)
             win.close();
     }
-    // Sidebar: herdr's sections, then the panes of the tab shown when it has several
+    // herdr's agents in the sidebar: grouped by workspace (a heading per workspace) or by priority (waiting for you, then
+    // done, working, idle), as herdr's "grouped" / "priority"; kept between runs
+    property string agentsSort: Aeroport.uiGet("herdr_agents") === "priority" ? "priority" : "grouped"
+    function toggleAgentsSort() {
+        agentsSort = agentsSort === "priority" ? "grouped" : "priority";
+        Aeroport.uiSet("herdr_agents", agentsSort);
+    }
+    function sortedAgents(items) {
+        if (agentsSort === "priority") {
+            const rank = { blocked: 0, done: 1, working: 2, idle: 3 };
+            return items.slice().sort((a, b) => (rank[a.status] ?? 4) - (rank[b.status] ?? 4)).map(a => Object.assign({}, a));
+        }
+        const out = [];
+        let place = null;
+        for (const a of items) {
+            if (a.workspace !== place) {
+                place = a.workspace;
+                out.push({ id: "", heading: true, label: a.detail || "" });
+            }
+            out.push(Object.assign({}, a, { detail: "", indent: 0 }));
+        }
+        return out;
+    }
+    // Sidebar: herdr's sections (agents sorted), then the panes of the tab shown when it has several
     readonly property var sidebarModel: {
         if (!modeState)
             return null;
         const v = view;
+        const sections = modeState.sections.map(sec => sec.key !== "agents" ? sec
+            : Object.assign({}, sec, { items: sortedAgents(sec.items), choice: agentsSort === "priority" ? Aeroport.tr("Priority") : Aeroport.tr("Grouped") }));
         const w = v && v.modeTab !== "" ? modeState.tabs.find(x => x.id === v.modeTab) : null;
-        if (!w || w.panes.length < 2)
-            return modeState;
-        const panes = { key: "panes", title: "Panes", add: false, items: w.panes.map(p => ({ id: p.id, label: p.label, detail: "", status: p.status, active: p.terminal === v.modeTerminal })) };
-        return Object.assign({}, modeState, { sections: modeState.sections.concat([panes]) });
+        if (w && w.panes.length > 1)
+            sections.push({ key: "panes", title: "Panes", add: false, items: w.panes.map(p => ({ id: p.id, label: p.label, detail: "", status: p.status, active: p.terminal === v.modeTerminal, focused: p.focused })) });
+        return Object.assign({}, modeState, { sections: sections });
     }
+
+    // Context menus of herdr's tabs, workspaces, panes and agents (the entries of herdr's own right-click menus)
+    property var menuTarget: null
+    function herdrMenu(section, item, x, y) {
+        menuTarget = { section: section, item: item, x: x, y: y };
+        let entries = [];
+        if (section === "tabs")
+            entries = [{ id: "rename-tab", label: Aeroport.tr("Rename Tab…") }, { id: "new-tab", label: Aeroport.tr("New Tab") },
+                       { separator: true }, { id: "close-tab", label: Aeroport.tr("Close Tab") }];
+        else if (section === "workspaces") {
+            entries = [{ id: "rename-workspace", label: Aeroport.tr("Rename Workspace…") }, { separator: true },
+                       { id: "new-worktree", label: Aeroport.tr("New Worktree…"), enabled: item.repo === true },
+                       { id: "open-worktree", label: Aeroport.tr("Open Worktree…"), enabled: item.repo === true }];
+            if (item.linked)
+                entries.push({ id: "remove-worktree", label: Aeroport.tr("Delete Worktree Checkout…") });
+            entries.push({ separator: true });
+            if (item.group && !item.linked)
+                entries.push({ id: "close-group", label: Aeroport.tr("Close Group…") });
+            entries.push({ id: "close-workspace", label: Aeroport.tr("Close Workspace…") });
+        } else if (section === "panes" || section === "agents") {
+            if (section === "agents")
+                entries = [{ id: "rename-agent", label: Aeroport.tr("Rename Agent…") }, { id: "show-agent", label: Aeroport.tr("Show Agent") }, { separator: true }];
+            entries = entries.concat([{ id: "rename-pane", label: Aeroport.tr("Rename Pane…") }, { id: "clear-pane-name", label: Aeroport.tr("Clear Pane Name") },
+                       { separator: true }, { id: "swap-pane", label: Aeroport.tr("Swap with Focused Pane"), enabled: section === "panes" && !item.focused },
+                       { id: "split-right", label: Aeroport.tr("Split Right") }, { id: "split-down", label: Aeroport.tr("Split Down") },
+                       { separator: true }, { id: "close-pane", label: Aeroport.tr("Close Pane") }]);
+        }
+        contextMenu.open(x, y, entries);
+    }
+    // The focused pane of the tab of a pane (swap)
+    function focusedPaneOf(paneId) {
+        for (const t of modeState ? modeState.tabs : [])
+            if (t.panes.some(p => p.id === paneId))
+                return t.pane;
+        return "";
+    }
+    function herdrMenuAction(id) {
+        const m = menuTarget;
+        if (!m)
+            return;
+        const it = m.item || {};
+        const ask = (title, text, done) => namePrompt.open(m.x, m.y, 240, title, text, done);
+        if (id === "rename-tab") ask(Aeroport.tr("Name of the tab"), it.label, v => modeAct({ op: "rename-tab", id: it.id, label: v }));
+        else if (id === "new-tab") modeAct({ op: "new-tab" });
+        else if (id === "close-tab") modeAct({ op: "close-tab", id: it.id });
+        else if (id === "rename-workspace") ask(Aeroport.tr("Name of the workspace"), it.label, v => modeAct({ op: "rename", section: "workspaces", id: it.id, label: v }));
+        else if (id === "new-worktree") ask(Aeroport.tr("Branch of the new worktree"), "", v => modeAct({ op: "new-worktree", id: it.id, label: v }));
+        else if (id === "open-worktree") modeAct({ op: "worktrees", id: it.id });
+        else if (id === "remove-worktree") confirm(Aeroport.tr("Delete the checkout of %1?").replace("%1", it.label), Aeroport.tr("Delete"), () => modeAct({ op: "remove-worktree", id: it.id }));
+        else if (id === "close-group") confirm(Aeroport.tr("Close %1 and its worktrees?").replace("%1", it.label), Aeroport.tr("Close"), () => modeAct({ op: "close", section: "workspaces", id: it.id, group: true }));
+        else if (id === "close-workspace") confirm(Aeroport.tr("Close the workspace %1?").replace("%1", it.label), Aeroport.tr("Close"), () => modeAct({ op: "close", section: "workspaces", id: it.id }));
+        else if (id === "rename-agent") ask(Aeroport.tr("Name of the agent"), it.label, v => modeAct({ op: "rename", section: "agents", id: it.id, label: v }));
+        else if (id === "show-agent") modeAct({ op: "select", section: "agents", id: it.id });
+        else if (id === "rename-pane") ask(Aeroport.tr("Name of the pane"), it.label, v => modeAct({ op: "rename", section: "panes", id: it.id, label: v }));
+        else if (id === "clear-pane-name") modeAct({ op: "rename", section: "panes", id: it.id });
+        else if (id === "swap-pane") modeAct({ op: "swap", id: it.id, with: focusedPaneOf(it.id) });
+        else if (id === "split-right" || id === "split-down") modeAct({ op: "split", id: it.id, direction: id === "split-right" ? "right" : "down" });
+        else if (id === "close-pane") modeAct({ op: "close", section: "panes", id: it.id });
+        else if (id.startsWith("worktree:")) modeAct({ op: "open-worktree", id: m.item.id, path: id.slice(9) });
+        else if (id.startsWith("space:")) modeAct({ op: "select", section: "workspaces", id: id.slice(6) });
+    }
+    Connections {
+        target: modeClient
+        function onReply(reply) {
+            const r = JSON.parse(reply);
+            if (r.op === "error")
+                win.showError(r.message);
+            else if (r.op === "worktrees" && win.menuTarget) {
+                const items = (r.items || []).map(w => ({ id: "worktree:" + w.path, label: (w.branch || w.label) + (w.open_workspace_id ? " ·" : ""), enabled: true }));
+                contextMenu.open(win.menuTarget.x, win.menuTarget.y, items.length ? items : [{ id: "", label: Aeroport.tr("No other worktree"), enabled: false }]);
+            }
+        }
+    }
+    // herdr's key bindings (its config's [keys], prefix Ctrl+B by default) in herdr's tabs: Aéroport shows herdr's panes
+    // without herdr's client, so it answers them itself. Read when the mode starts and on reload_config.
+    property var herdrKeys: []
+    Connections {
+        target: modeClient
+        function onKindChanged() { win.herdrKeys = modeClient.kind === "herdr" ? JSON.parse(modeClient.keysJson()) : [] }
+    }
+    Instantiator {
+        model: win.herdrKeys
+        delegate: Shortcut {
+            required property var modelData
+            sequences: modelData.keys
+            enabled: win.view !== null && win.view.modeTab !== "" && !contextMenu.visible && !namePrompt.visible
+            onActivated: win.herdrKey(modelData.action)
+        }
+    }
+    function modeSection(key) {
+        const sec = modeState ? modeState.sections.find(x => x.key === key) : null;
+        return sec ? sec.items : [];
+    }
+    function herdrKey(name) {
+        const v = view;
+        if (!v || v.modeTab === "" || !modeState)
+            return;
+        const parts = name.split(":");
+        const action = parts[0], n = parseInt(parts[1] || "0");
+        const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4);
+        const herdrTabs = tabs.filter(t => t.modeTab !== "");
+        const here = herdrTabs.indexOf(v);
+        const spaces = modeSection("workspaces"), agents = modeSection("agents");
+        const space = spaces.find(w => w.active) || null;
+        const tabInfo = modeState.tabs.find(t => t.id === v.modeTab);
+        const panes = tabInfo ? tabInfo.panes : [];
+        const pane = panes.find(x => x.terminal === v.modeTerminal) || null;
+        // An entry of a context menu, on an item, at the top left of the terminal
+        const menuOn = (section, item, id) => { if (item) { menuTarget = { section: section, item: item, x: p.x, y: p.y }; herdrMenuAction(id) } };
+        const showTab = t => { if (t) select(tabs.indexOf(t)) };
+        const showSpace = w => { if (w) modeAct({ op: "select", section: "workspaces", id: w.id }) };
+        const showAgent = a => { if (a) modeAct({ op: "select", section: "agents", id: a.id }) };
+        const showPane = x => { if (x) { v.modePane = x.id; syncMode() } };
+        const stepIn = (list, i, d) => list.length ? list[(i + d + list.length) % list.length] : null;
+        if (action === "settings") Qt.openUrlExternally("file://" + modeClient.configPath());
+        else if (action === "detach") modeClient.stop();
+        else if (action === "reload_config") { modeAct({ op: "reload-config" }); herdrKeys = JSON.parse(modeClient.keysJson()) }
+        else if (action === "open_notification_target") showAgent(agents.find(a => a.status === "blocked") || agents.find(a => a.status === "done"));
+        else if (action === "workspace_picker" || action === "goto") {
+            menuTarget = { section: "picker", item: null, x: p.x, y: p.y };
+            contextMenu.open(p.x, p.y, spaces.map(w => ({ id: "space:" + w.id, label: (w.indent ? "    " : "") + w.label, checked: w.active })));
+        }
+        else if (action === "new_workspace") modeAct({ op: "new", section: "workspaces" });
+        else if (action === "new_worktree") menuOn("workspaces", space, "new-worktree");
+        else if (action === "open_worktree") menuOn("workspaces", space, "open-worktree");
+        else if (action === "remove_worktree") menuOn("workspaces", space && space.linked ? space : null, "remove-worktree");
+        else if (action === "rename_workspace") menuOn("workspaces", space, "rename-workspace");
+        else if (action === "close_workspace") menuOn("workspaces", space, "close-workspace");
+        else if (action === "previous_workspace" || action === "next_workspace") showSpace(stepIn(spaces, spaces.indexOf(space), action === "next_workspace" ? 1 : -1));
+        else if (action === "switch_workspace") showSpace(spaces[n - 1]);
+        else if (action === "previous_agent" || action === "next_agent") showAgent(stepIn(agents, agents.findIndex(a => a.active), action === "next_agent" ? 1 : -1));
+        else if (action === "focus_agent") showAgent(agents[n - 1]);
+        else if (action === "new_tab") modeAct({ op: "new-tab" });
+        else if (action === "rename_tab") menuOn("tabs", { id: v.modeTab, label: v.modeLabel }, "rename-tab");
+        else if (action === "previous_tab" || action === "next_tab") showTab(stepIn(herdrTabs, here, action === "next_tab" ? 1 : -1));
+        else if (action === "move_tab_previous" || action === "move_tab_next") {
+            const to = here + (action === "move_tab_next" ? 1 : -1);
+            if (to >= 0 && to < herdrTabs.length) modeAct({ op: "move-tab", id: v.modeTab, index: to });
+        }
+        else if (action === "switch_tab") showTab(herdrTabs[n - 1]);
+        else if (action === "close_tab") modeAct({ op: "close-tab", id: v.modeTab });
+        else if (action === "rename_pane") menuOn("panes", pane, "rename-pane");
+        // Aéroport shows one pane of a tab: the directions go through them in their order
+        else if (action === "cycle_pane_next" || action === "focus_pane_right" || action === "focus_pane_down") showPane(stepIn(panes, panes.indexOf(pane), 1));
+        else if (action === "cycle_pane_previous" || action === "focus_pane_left" || action === "focus_pane_up" || action === "last_pane") showPane(stepIn(panes, panes.indexOf(pane), -1));
+        else if (action === "split_vertical") menuOn("panes", pane, "split-right");
+        else if (action === "split_horizontal") menuOn("panes", pane, "split-down");
+        else if (action === "close_pane") menuOn("panes", pane, "close-pane");
+        else if (action === "toggle_sidebar") toggleSidebar();
+    }
+
+    // A question in the footer before a close or a delete (Cancel, then the action), as the HIG's inline confirmation
+    property var asking: null
+    function confirm(text, action, done) {
+        asking = { text: text, action: action, done: done };
+    }
+    // The question answered from the keyboard: Enter for its action (the default button), Escape cancels
+    function answer(go) {
+        const a = asking;
+        asking = null;
+        if (go && a)
+            a.done();
+        refocus();
+    }
+    Shortcut { sequences: ["Return", "Enter"]; enabled: win.asking !== null; onActivated: win.answer(true) }
+    Shortcut { sequence: "Esc"; enabled: win.asking !== null || win.error !== ""; onActivated: { win.error = ""; win.answer(false) } }
+    // An error of herdr, in the footer for a few seconds
+    property string error: ""
+    function showError(text) {
+        error = text;
+        errorTimer.restart();
+    }
+    Timer { id: errorTimer; interval: 6000; onTriggered: win.error = "" }
 
     // Context for the assistant (Mod+Y): the terminal of the active window, a moment after each change
     Timer {
@@ -273,7 +470,7 @@ Window {
     onCurrentChanged: if (searching) closeSearch()
 
     function refocus() {
-        if (view && !aboutCard.visible && !windowPanel.visible)
+        if (view && !aboutCard.visible && !windowPanel.visible && !contextMenu.visible && !namePrompt.visible)
             view.forceActiveFocus();
     }
 
@@ -488,8 +685,21 @@ Window {
                         id: tabArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-                        onClicked: e => e.button === Qt.MiddleButton ? win.closeTab(win.tabs[tab.index], true) : win.select(tab.index)
+                        acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+                        onClicked: e => {
+                            const t = win.tabs[tab.index];
+                            if (e.button === Qt.RightButton) {
+                                // herdr's tab menu on a tab of herdr
+                                if (t.modeTab !== "") {
+                                    const p = tabArea.mapToItem(null, e.x, e.y);
+                                    win.herdrMenu("tabs", { id: t.modeTab, label: t.modeLabel }, p.x, p.y);
+                                }
+                            } else if (e.button === Qt.MiddleButton) {
+                                win.closeTab(t, true);
+                            } else {
+                                win.select(tab.index);
+                            }
+                        }
                     }
                     Rectangle {
                         visible: tab.hovered
@@ -525,6 +735,8 @@ Window {
             win.refocus();
         }
         onAdded: section => { win.modeAct({ op: "new", section: section }); win.refocus() }
+        onContextRequested: (section, item, x, y) => win.herdrMenu(section, item, x, y)
+        onChoiceClicked: section => { if (section === "agents") win.toggleAgentsSort() }
         onLeave: { modeClient.stop(); win.refocus() }
     }
 
@@ -800,7 +1012,7 @@ Window {
         }
     }
 
-    // Footer: where the shell started, size of the grid or place in the history
+    // Footer: where the shell started, size of the grid or place in the history; a confirmation or an error takes it whole
     Rectangle {
         id: footer
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
@@ -808,6 +1020,55 @@ Window {
         height: win.footerShown ? FiliTheme.statusHeight : 0
         color: FiliTheme.backgroundDeep
         Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: FiliTheme.borderWidth; color: FiliTheme.border }
+        Rectangle {
+            id: question
+            visible: win.asking !== null || win.error !== ""
+            anchors { fill: parent; topMargin: FiliTheme.borderWidth }
+            z: 5
+            color: FiliTheme.backgroundDeep
+            Text {
+                anchors { left: parent.left; leftMargin: FiliTheme.margin; right: answers.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
+                text: win.asking ? win.asking.text : win.error
+                elide: Text.ElideRight
+                font.family: FiliTheme.font
+                font.pixelSize: FiliTheme.sizeSmall
+                color: win.asking ? FiliTheme.text : FiliTheme.danger
+            }
+            Row {
+                id: answers
+                anchors { right: parent.right; rightMargin: FiliTheme.margin; verticalCenter: parent.verticalCenter }
+                spacing: FiliTheme.space4
+                Repeater {
+                    model: win.asking ? [{ label: Aeroport.tr("Cancel"), go: false }, { label: win.asking.action, go: true }] : [{ label: Aeroport.tr("OK"), go: false }]
+                    Text {
+                        required property var modelData
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.label
+                        font.family: FiliTheme.font
+                        font.pixelSize: FiliTheme.sizeSmall
+                        font.weight: modelData.go ? FiliTheme.weightAccent : Font.Normal
+                        color: modelData.go ? FiliTheme.danger : answerArea.containsMouse ? FiliTheme.text : FiliTheme.textSecondary
+                        MouseArea {
+                            id: answerArea
+                            anchors { fill: parent; margins: -4 }
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                // Read before the question goes: clearing it destroys this button
+                                const a = win.asking, go = parent.modelData.go;
+                                win.asking = null;
+                                win.error = "";
+                                if (go && a)
+                                    a.done();
+                                win.refocus();
+                            }
+                        }
+                        Accessible.role: Accessible.Button
+                        Accessible.name: text
+                    }
+                }
+            }
+        }
         Text {
             id: where
             anchors { left: parent.left; leftMargin: FiliTheme.margin; right: modeOffer.wanted ? modeOffer.left : txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
@@ -925,6 +1186,15 @@ Window {
         }
     }
 
+    ContextMenu {
+        id: contextMenu
+        onActivated: id => win.herdrMenuAction(id)
+        onVisibleChanged: if (!visible && !namePrompt.visible) win.refocus()
+    }
+    TextPrompt {
+        id: namePrompt
+        onVisibleChanged: if (!visible) win.refocus()
+    }
     WindowPanel {
         id: windowPanel
         anchorRight: win.headerShown ? width - (toolbar.height - closeButton.height) / 2 : width - FiliTheme.margin

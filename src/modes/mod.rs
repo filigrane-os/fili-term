@@ -17,7 +17,8 @@
 //! herdr: each of its tabs is a tab of Aéroport attached to the terminal of a pane (`herdr terminal attach TERMINAL`),
 //! without herdr's own interface. Actions (JSON from the window): `{"op": "tab", "id"}`, `{"op": "close-tab", "id"}`,
 //! `{"op": "new-tab"}`,
-//! `{"op": "select", "section", "id"}`, `{"op": "new", "section"}`. Notices (a program asks for attention) go to the
+//! `{"op": "select", "section", "id"}`, `{"op": "new", "section"}`, and herdr's own (herdr.rs: rename, close, split,
+//! swap, worktrees). An action that asks for something gets a reply; a failed one replies `{"op": "error", "message"}`. Notices (a program asks for attention) go to the
 //! window, which shows a notification when nobody watches the terminal: `{"kind": "blocked" | "done", "agent", "place"}`.
 
 pub mod herdr;
@@ -42,6 +43,8 @@ pub enum In {
 pub enum Out {
     State(String),
     Notice(String),
+    /// Answer to an action that asked for something (JSON {"op", …}), or {"op": "error", "message"} when one failed
+    Reply(String),
 }
 
 pub struct Ctx {
@@ -58,6 +61,9 @@ impl Ctx {
     }
     pub fn notice(&self, notice: String) {
         (self.out)(Out::Notice(notice));
+    }
+    pub fn reply(&self, reply: String) {
+        (self.out)(Out::Reply(reply));
     }
 }
 

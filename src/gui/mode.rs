@@ -20,6 +20,9 @@ pub mod qobject {
         /// The program asks for attention (JSON {kind, agent, place})
         #[qsignal]
         fn notice(self: Pin<&mut ModeClient>, notice: &QString);
+        /// Answer to an action (JSON {op, …}; op "error": {message})
+        #[qsignal]
+        fn reply(self: Pin<&mut ModeClient>, reply: &QString);
 
         /// Start the mode of `kind` ("herdr"). `pid`: a client of the program started by hand in a tab (its socket is
         /// the one to use; it is then ended, its tab goes back to the shell), 0 for none. False when the program cannot
@@ -32,6 +35,14 @@ pub mod qobject {
         #[qinvokable]
         fn act(self: Pin<&mut ModeClient>, action: &QString);
         /// Command of a tab showing a terminal of the program (herdr: `herdr terminal attach TERMINAL`)
+        /// herdr's key bindings, JSON [{action, keys}] (its config's [keys] over its defaults)
+        #[qinvokable]
+        #[cxx_name = "keysJson"]
+        fn keys_json(self: &ModeClient) -> QString;
+        /// herdr's config file (Settings of herdr)
+        #[qinvokable]
+        #[cxx_name = "configPath"]
+        fn config_path(self: &ModeClient) -> QString;
         #[qinvokable]
         #[cxx_name = "attachCommand"]
         fn attach_command(self: &ModeClient, terminal: &QString) -> QStringList;
@@ -89,6 +100,7 @@ impl qobject::ModeClient {
                     }
                 }
                 Out::Notice(n) => this.notice(&QString::from(&n)),
+                Out::Reply(r) => this.reply(&QString::from(&r)),
             });
         });
         let mode = Mode::start(&kind, socket.clone(), out);
@@ -115,6 +127,14 @@ impl qobject::ModeClient {
         if let (Some(mode), Ok(v)) = (self.mode.as_ref(), serde_json::from_str(&action.to_string())) {
             mode.action(v);
         }
+    }
+
+    fn keys_json(&self) -> QString {
+        QString::from(&herdr::keys_json(&std::fs::read_to_string(herdr::config_path()).unwrap_or_default()))
+    }
+
+    fn config_path(&self) -> QString {
+        QString::from(&herdr::config_path().to_string_lossy().into_owned())
     }
 
     fn attach_command(&self, terminal: &QString) -> QStringList {

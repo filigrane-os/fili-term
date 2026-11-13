@@ -35,6 +35,13 @@
   and agents go through its socket API; a notification when an agent waits for you or finished while you look
   elsewhere. Stop Integration closes those tabs, herdr goes on.
 - The daemon tells the window the process in the foreground of each terminal (from /proc, once a second).
+- herdr's right-click menus: on a tab (rename, new, close), a workspace (rename, new worktree, open worktree, delete a
+  worktree checkout, close the group, close), a pane or an agent (rename, clear the name, swap with the focused pane,
+  split right or down, close); names typed in place, closes confirmed in the footer, herdr's errors shown there. Linked
+  worktrees under their repository; agents grouped by workspace or by priority (the choice on the Agents heading).
+- herdr's key bindings in herdr's tabs (prefix Ctrl+B and the `[keys]` of herdr's config): tabs, workspaces,
+  worktrees, agents, panes (the directions go through the panes of the tab in turn), sidebar, detach (stops the
+  integration), settings, reload. A question in the footer answers to Enter and Escape.
 - View > Show Sidebar (Ctrl+Shift+B).
 - Fix: a session hung up by its window (closed tab) left its terminal state in the daemon.
 

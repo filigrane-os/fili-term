@@ -1,5 +1,7 @@
-// Sidebar of an integrated mode (herdr: workspaces and agents), drawn from the mode's state (daemon/src/modes): foldable
-// sections, a row per item with the status of its agents, the action to leave the mode at the bottom.
+// Sidebar of an integrated mode (herdr: workspaces, agents, panes), drawn from the mode's state (src/modes): foldable
+// sections, a row per item with the status of its agents (indented under its group, or a group heading), a choice on the
+// right of a section heading (herdr's agents: grouped or by priority), a context menu on right click, the action to leave
+// the mode at the bottom.
 import QtQuick
 import QtQuick.Window
 import Fili.Term
@@ -11,6 +13,10 @@ Rectangle {
     signal activated(string section, string id)
     signal added(string section)
     signal leave()
+    // Right click on an item: its section, the item, where (window coordinates)
+    signal contextRequested(string section, var item, real x, real y)
+    // Click on the choice at the right of a section heading
+    signal choiceClicked(string section)
 
     color: FiliTheme.backgroundDeep
     clip: true
@@ -77,7 +83,7 @@ Rectangle {
                             color: FiliTheme.muted
                         }
                         Text {
-                            anchors { left: arrow.right; leftMargin: FiliTheme.space2; right: add.visible ? add.left : parent.right; rightMargin: FiliTheme.space2; bottom: parent.bottom; bottomMargin: (FiliTheme.sideRowHeight - height) / 2 }
+                            anchors { left: arrow.right; leftMargin: FiliTheme.space2; right: choice.visible ? choice.left : add.visible ? add.left : parent.right; rightMargin: FiliTheme.space2; bottom: parent.bottom; bottomMargin: (FiliTheme.sideRowHeight - height) / 2 }
                             text: Aeroport.tr(section.modelData.title)
                             elide: Text.ElideRight
                             font.family: FiliTheme.font
@@ -86,6 +92,19 @@ Rectangle {
                             color: FiliTheme.muted
                         }
                         MouseArea { id: head; anchors.fill: parent; hoverEnabled: true; onClicked: side.toggle(section.modelData.key) }
+                        // A choice of the section (herdr's agents: "Grouped" or "Priority"), a click changes it
+                        Text {
+                            id: choice
+                            visible: (section.modelData.choice || "") !== ""
+                            anchors { right: add.visible ? add.left : parent.right; rightMargin: FiliTheme.space3; bottom: parent.bottom; bottomMargin: (FiliTheme.sideRowHeight - height) / 2 }
+                            text: section.modelData.choice || ""
+                            font.family: FiliTheme.font
+                            font.pixelSize: FiliTheme.sizeSmall
+                            color: choiceArea.containsMouse ? FiliTheme.text : FiliTheme.muted
+                            MouseArea { id: choiceArea; anchors { fill: parent; margins: -4 } hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: side.choiceClicked(section.modelData.key) }
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                        }
                         IconButton {
                             id: add
                             visible: section.modelData.add
@@ -112,15 +131,18 @@ Rectangle {
                         delegate: Rectangle {
                             id: row
                             required property var modelData
+                            // A heading inside the section (a workspace above its agents): small, muted, not clickable
+                            readonly property bool heading: modelData.heading === true
+                            readonly property int indent: (modelData.indent || 0) * FiliTheme.space4
                             width: section.width
-                            height: FiliTheme.sideRowHeight
-                            color: modelData.active ? FiliTheme.surfaceHover : rowArea.containsMouse ? FiliTheme.alpha(FiliTheme.surfaceHover, 0.5) : "transparent"
+                            height: heading ? FiliTheme.sideRowHeight - FiliTheme.space2 : FiliTheme.sideRowHeight
+                            color: heading ? "transparent" : modelData.active ? FiliTheme.surfaceHover : rowArea.containsMouse ? FiliTheme.alpha(FiliTheme.surfaceHover, 0.5) : "transparent"
                             // Status of the agents: a dot (hollow when idle); none when unknown
                             Rectangle {
                                 id: dot
                                 readonly property string status: row.modelData.status || ""
-                                visible: status !== "" && status !== "unknown"
-                                x: FiliTheme.margin / 2
+                                visible: !row.heading && status !== "" && status !== "unknown"
+                                x: FiliTheme.margin / 2 + row.indent
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: 8
                                 height: 8
@@ -138,6 +160,7 @@ Rectangle {
                             }
                             Text {
                                 id: detail
+                                visible: !row.heading
                                 anchors { right: parent.right; rightMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
                                 width: Math.min(implicitWidth, 72)
                                 text: row.modelData.detail || ""
@@ -147,15 +170,29 @@ Rectangle {
                                 color: FiliTheme.muted
                             }
                             Text {
-                                anchors { left: parent.left; leftMargin: FiliTheme.margin / 2 + 8 + FiliTheme.space2; right: detail.left; rightMargin: FiliTheme.space2; verticalCenter: parent.verticalCenter }
+                                anchors { left: parent.left; leftMargin: FiliTheme.margin / 2 + row.indent + (row.heading ? 0 : 8 + FiliTheme.space2); right: detail.left; rightMargin: FiliTheme.space2; verticalCenter: parent.verticalCenter }
                                 text: row.modelData.label
                                 elide: Text.ElideRight
                                 font.family: FiliTheme.font
-                                font.pixelSize: FiliTheme.size
-                                font.weight: row.modelData.active ? FiliTheme.weightAccent : Font.Normal
-                                color: FiliTheme.text
+                                font.pixelSize: row.heading ? FiliTheme.sizeSmall : FiliTheme.size
+                                font.weight: row.modelData.active && !row.heading ? FiliTheme.weightAccent : Font.Normal
+                                color: row.heading ? FiliTheme.muted : FiliTheme.text
                             }
-                            MouseArea { id: rowArea; anchors.fill: parent; hoverEnabled: true; onClicked: side.activated(section.modelData.key, row.modelData.id) }
+                            MouseArea {
+                                id: rowArea
+                                anchors.fill: parent
+                                enabled: !row.heading
+                                hoverEnabled: true
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: mouse => {
+                                    if (mouse.button === Qt.RightButton) {
+                                        const p = rowArea.mapToItem(null, mouse.x, mouse.y);
+                                        side.contextRequested(section.modelData.key, row.modelData, p.x, p.y);
+                                    } else {
+                                        side.activated(section.modelData.key, row.modelData.id);
+                                    }
+                                }
+                            }
                             Accessible.role: Accessible.ListItem
                             Accessible.name: row.modelData.label + (side.statusName(dot.status) ? ", " + side.statusName(dot.status) : "")
                         }

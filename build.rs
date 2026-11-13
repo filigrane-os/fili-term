@@ -31,6 +31,8 @@ fn main() {
                 "qml/Icon.qml",
                 "qml/IconButton.qml",
                 "qml/Sidebar.qml",
+                "qml/ContextMenu.qml",
+                "qml/TextPrompt.qml",
             ])
             .qml_file(QmlFile::from("qml/FiliTheme.qml").singleton(true))
             .depend("QtQuick"),
