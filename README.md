@@ -57,6 +57,23 @@ reads the output itself with `fili-term output`.
 
 Colour queries (OSC 10/11/4) are answered with the theme's palette.
 
+## Integrated modes
+
+Only when the user calls the program: `fili-term mode herdr`, or the footer's offer when `herdr` runs in a tab (the
+daemon reads the foreground process of each terminal from `/proc` once a second; `[modes] herdr = "ask" | "auto" |
+"off"`). Nothing runs otherwise. The adapter (`src/modes/`) is a thread of the window process while the mode is on; it
+sends the window a generic state (sections, items with a status, tabs and their panes) as JSON and takes its actions.
+
+- herdr (herdr.dev): each tab of herdr's focused workspace is a tab of the window, attached to the terminal of one pane
+  (`herdr terminal attach TERMINAL`): no sidebar, tab row or border of herdr. Its workspaces, its agents (status:
+  working, waiting for you, done, idle) and the panes of the tab shown (a tab split in several panes shows one, chosen
+  there) fill the sidebar. New tab, close tab, a click on a workspace or an agent go through herdr's socket API
+  (newline-delimited JSON, one connection per request, one kept for the events). Integrate on a herdr started by hand
+  ends that client (its server and panes go on) and opens its tabs beside. Its server is started when it does not run.
+  A notification when an agent waits or finished while herdr's tabs are not watched. Stop Integration closes the tabs;
+  herdr goes on.
+- Next: nvim (msgpack-RPC, its tabs and a file tree), tmux (windows and sessions).
+
 ## Settings and theme
 
 `~/.config/filigrane/fili-term.toml`, every key optional: `font_size` (12), `padding` (10), `window_buttons` (true) at
@@ -78,5 +95,4 @@ Full-screen repaint: ≈ 4.5 ms (software). Hidden tabs drop their image.
 
 ## Not done yet
 
-Box-drawing characters drawn by hand, selection in the history, search, URL detection, session sidebar,
-`-e`/`--app-id`/`--hold` options.
+Box-drawing characters drawn by hand, a sidebar of the daemon's sessions, the nvim and tmux modes.

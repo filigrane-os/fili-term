@@ -3,6 +3,7 @@ pub mod app;
 pub mod i18n;
 pub mod instance;
 pub mod keys;
+pub mod mode;
 pub mod settings;
 pub mod terminal;
 pub mod theme;

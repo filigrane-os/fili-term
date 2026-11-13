@@ -168,6 +168,8 @@ pub mod qobject {
         #[qproperty(i32, search_count, cxx_name = "searchCount")]
         #[qproperty(i32, search_position, cxx_name = "searchPosition")]
         #[qproperty(bool, search_active, cxx_name = "searchActive")]
+        /// Name of the process in the foreground of the terminal ("zsh" at the prompt, "herdr", "nvim"…)
+        #[qproperty(QString, foreground)]
         type TerminalView = super::TerminalViewRust;
 
         /// The shell ended (status), or the daemon went away (-1)
@@ -259,6 +261,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "searchClose"]
         fn search_close(self: Pin<&mut TerminalView>);
+        /// Process in the foreground (its pid): Integrate replaces a herdr client started by hand
+        #[qinvokable]
+        #[cxx_name = "foregroundPid"]
+        fn foreground_pid(self: &TerminalView) -> i32;
     }
 
     unsafe extern "RustQt" {
@@ -628,6 +634,7 @@ enum Message {
     Cwd(String),
     SearchState(u32, u32, bool),
     BlockText(u32, String),
+    Foreground(u32, String),
     Gone,
 }
 
@@ -692,6 +699,9 @@ pub struct TerminalViewRust {
     search_count: i32,
     search_position: i32,
     search_active: bool,
+    foreground: QString,
+    /// Process in the foreground (Integrate replaces a herdr client started by hand)
+    foreground_pid: u32,
     shown_blocks: Vec<Shown>,
     /// Link under the pointer while Ctrl is held: its address and the cells to underline (row, first, last column)
     link_url: String,
@@ -759,6 +769,8 @@ impl Default for TerminalViewRust {
             search_count: 0,
             search_position: 0,
             search_active: false,
+            foreground: QString::default(),
+            foreground_pid: 0,
             block_info: HashMap::new(),
             requests: HashMap::new(),
             next_request: 1,
@@ -862,6 +874,10 @@ fn decode(kind: u8, payload: &[u8]) -> Option<Message> {
             Message::Block(id, info)
         }
         proto::CWD => Message::Cwd(r.string().ok()?),
+        proto::FOREGROUND => {
+            let pid = r.u32().ok()?;
+            Message::Foreground(pid, String::from_utf8_lossy(r.rest()).into_owned())
+        }
         proto::SEARCH_STATE => Message::SearchState(r.u32().ok()?, r.u32().ok()?, r.u8().ok()? != 0),
         proto::BLOCK_TEXT => {
             let request = r.u32().ok()?;
@@ -1198,6 +1214,12 @@ impl qobject::TerminalView {
                 self.as_mut().set_search_count(count as i32);
                 self.as_mut().set_search_position(position as i32);
                 self.as_mut().set_search_active(active);
+            }
+            Message::Foreground(pid, name) => {
+                self.as_mut().rust_mut().foreground_pid = pid;
+                if self.foreground.to_string() != name {
+                    self.set_foreground(QString::from(&name));
+                }
             }
             Message::Cwd(dir) => {
                 if !dir.is_empty() && self.cwd.to_string() != dir {
@@ -2422,6 +2444,11 @@ impl qobject::TerminalView {
     fn search_close(self: Pin<&mut Self>) {
         self.send(proto::SEARCH, &[3u8]);
     }
+
+    fn foreground_pid(&self) -> i32 {
+        self.foreground_pid as i32
+    }
+
 
     fn set_shown(mut self: Pin<&mut Self>, shown: bool) {
         if shown {

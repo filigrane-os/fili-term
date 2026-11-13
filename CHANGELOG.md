@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased (V3, part A)
+## Unreleased (V3)
+
+### V3, part A
 
 - `fili-term [--app-id ID] [-T TITLE] [--hold] [--tab] [-e COMMAND…]`: the options scripts need from a terminal.
   `--app-id` opens the window in a process of its own with that Wayland app-id (compositor rules), `--hold` keeps
@@ -23,6 +25,18 @@
   button and previous / next buttons; history scroll bar; dashed line between blocks; `line_spacing` (default 0);
   tabs show the running command with a spinner, and a check or cross for a result not yet seen.
 - The footer shows the latest fili-tx transaction for two minutes, with Undo (Redo once undone).
+
+### V3, part B
+
+- Integrated modes, only when the user calls the program. First one: herdr (`fili-term mode herdr`, or Integrate in the
+  footer when `herdr` runs in a tab; `[modes] herdr = "ask" | "auto" | "off"`, Shell > Integrate Program). herdr's tabs
+  become tabs of the window, each attached to a pane (`herdr terminal attach`), without herdr's own interface; its
+  workspaces, agents (with their status) and the panes of the tab shown fill the sidebar; new and closed tabs, workspaces
+  and agents go through its socket API; a notification when an agent waits for you or finished while you look
+  elsewhere. Stop Integration closes those tabs, herdr goes on.
+- The daemon tells the window the process in the foreground of each terminal (from /proc, once a second).
+- View > Show Sidebar (Ctrl+Shift+B).
+- Fix: a session hung up by its window (closed tab) left its terminal state in the daemon.
 
 ## v2.0.0 (2026-11-12)
 

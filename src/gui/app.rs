@@ -40,6 +40,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "settingsJson"]
         fn settings_json(self: &Aeroport) -> QString;
+        /// `[modes] KIND = "POLICY"` in fili-term.toml (ask, auto, off)
+        #[qinvokable]
+        #[cxx_name = "setModePolicy"]
+        fn set_mode_policy(self: &Aeroport, kind: &QString, policy: &QString);
         /// Interface state kept between runs (~/.local/state/filigrane/term/ui, lines key=value)
         #[qinvokable]
         #[cxx_name = "uiGet"]
@@ -208,6 +212,12 @@ impl qobject::Aeroport {
 
     fn settings_json(&self) -> QString {
         QString::from(&super::settings::json())
+    }
+
+    fn set_mode_policy(&self, kind: &QString, policy: &QString) {
+        if let Err(e) = super::settings::set_mode_policy(&kind.to_string(), &policy.to_string()) {
+            eprintln!("fili-term: [modes]: {e}");
+        }
     }
 
     fn ui_get(&self, key: &QString) -> QString {

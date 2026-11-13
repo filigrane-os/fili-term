@@ -68,6 +68,8 @@ pub const BLOCK_TEXT: u8 = 19;
 pub const ERROR: u8 = 20;
 /// State of the search: u32 matches found, u32 position of the current one (1-based, 0: none), u8 active.
 pub const SEARCH_STATE: u8 = 21;
+/// Process in the foreground of the terminal: u32 pid, then its name (UTF-8; the shell at its prompt).
+pub const FOREGROUND: u8 = 22;
 
 pub fn read_msg(r: &mut impl Read) -> io::Result<(u8, Vec<u8>)> {
     let mut len = [0u8; 4];

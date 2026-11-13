@@ -31,7 +31,7 @@ Window {
     property bool showHeader: Aeroport.windowPart("header")
     property bool showFooter: Aeroport.windowPart("footer")
     readonly property bool headerShown: showHeader
-    readonly property bool footerShown: showFooter || txNotice.wanted
+    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted
     Connections {
         target: Aeroport
         function onWindowChanged() {
@@ -53,7 +53,7 @@ Window {
     title: view && view.title ? view.title : initialTitle !== "" ? initialTitle : "Aéroport"
 
     function tabTitle(t) {
-        return !t ? "" : t.title ? t.title : win.initialTitle !== "" ? win.initialTitle : Aeroport.shortPath(t.cwd);
+        return !t ? "" : t.modeTab !== "" ? t.modeLabel : t.title ? t.title : win.initialTitle !== "" ? win.initialTitle : Aeroport.shortPath(t.cwd);
     }
     function addTab(attach, dir, argv) {
         const t = termComponent.createObject(stack, { sessionId: attach, cwd: dir, command: argv || [] });
@@ -64,6 +64,10 @@ Window {
         if (i < 0 || i >= tabs.length)
             return;
         current = i;
+        // A tab of herdr: herdr's focus follows (its sidebar, the agents' place)
+        const t = tabs[i];
+        if (t.modeTab !== "" && modeState && !modeState.tabs.some(x => x.id === t.modeTab && x.active))
+            modeClient.act(JSON.stringify({ op: "tab", id: t.modeTab }));
         for (let k = 0; k < tabs.length; ++k) {
             tabs[k].visible = k === i;
             tabs[k].setShown(k === i);
@@ -82,6 +86,11 @@ Window {
         const i = tabs.indexOf(t);
         if (i < 0)
             return;
+        // Closing a tab of herdr closes it in herdr; the tab goes away with the next state
+        if (hangUp && t.modeTab !== "" && !syncing && modeState) {
+            modeClient.act(JSON.stringify({ op: "close-tab", id: t.modeTab }));
+            return;
+        }
         if (hangUp)
             t.closeSession();
         tabs = tabs.filter(x => x !== t);
@@ -102,6 +111,135 @@ Window {
         if (b)
             Aeroport.askRob(v.contextJson(), id, b.command, b.exit !== null && b.exit !== 0);
     }
+    // Integrated mode (src/modes), only when the user calls the program: `fili-term mode herdr`, or the footer's offer
+    // when herdr runs in a tab (or [modes] herdr = "auto"). herdr's tabs become tabs of this window, each attached to the
+    // terminal of a pane (`herdr terminal attach`), without herdr's own interface; its workspaces and agents fill the
+    // sidebar. Stopping the mode closes those tabs; herdr goes on.
+    ModeClient {
+        id: modeClient
+        onStateChanged: win.syncMode()
+        // An agent waits for an answer or finished, while nobody watches herdr's tabs
+        onNotice: notice => {
+            if (win.active && win.view && win.view.modeTab !== "")
+                return;
+            const n = JSON.parse(notice);
+            const who = n.agent || Aeroport.tr("An agent");
+            Aeroport.notify(n.kind === "blocked" ? Aeroport.tr("%1 is waiting for you").replace("%1", who) : Aeroport.tr("%1 finished").replace("%1", who),
+                            n.place ? "herdr · " + n.place : "herdr");
+        }
+    }
+    readonly property var modeState: modeClient.state !== "" ? JSON.parse(modeClient.state) : null
+    // Where herdr's tabs go in the row (they stay together)
+    property int modeAt: 0
+    property bool syncing: false
+    property string modeActive: ""
+    // The sidebar of the mode, beside herdr's tabs (View > Show Sidebar hides it, for the window)
+    property bool sidebarWanted: Aeroport.uiGet("sidebar") !== "0"
+    readonly property bool sidebarShown: modeState !== null && sidebarWanted && (!view || view.modeTab !== "" || !tabs.some(t => t.modeTab !== ""))
+    function toggleSidebar() {
+        sidebarWanted = !sidebarWanted;
+        Aeroport.uiSet("sidebar", sidebarWanted ? "1" : "0");
+    }
+    // Policy per program (fili-term.toml [modes]); "Don't Ask Again" changes it at once for this window
+    property var modePolicies: settings.modes
+    function modeKind(process) {
+        for (const k of Object.keys(modePolicies))
+            if (process === k || process.startsWith(k + "-"))
+                return k;
+        return "";
+    }
+    // Program of a plain tab that could be integrated ("" when none, or a mode already runs in the window)
+    function integrable(t) {
+        return t && t.modeTab === "" && modeClient.state === "" ? modeKind(t.foreground) : "";
+    }
+    // Start the mode: from a tab where the program runs (its client leaves, the tab goes back to its shell), or alone
+    function startMode(kind, fromTab) {
+        if (modeClient.state !== "")
+            return;
+        modeAt = fromTab ? tabs.indexOf(fromTab) + 1 : tabs.length;
+        modeActive = "";
+        if (!modeClient.start(kind, fromTab ? fromTab.foregroundPid() : 0))
+            Aeroport.notify(Aeroport.tr("Cannot integrate %1").replace("%1", kind), Aeroport.tr("It runs on another machine."));
+    }
+    // Menu "Integrate Program": the program of the tab, or leave the mode that runs
+    function integrate() {
+        if (modeClient.state !== "")
+            modeClient.stop();
+        else if (integrable(view) !== "")
+            startMode(integrable(view), view);
+    }
+    function modeAct(action) {
+        modeClient.act(JSON.stringify(action));
+    }
+    // herdr's tabs as tabs of the window: one per tab of herdr's focused workspace, attached to the pane chosen in the
+    // sidebar or else to the focused one; together at modeAt, in herdr's order
+    function syncMode() {
+        // The state itself, not modeState: its binding may not have followed yet
+        const st = modeClient.state !== "" ? JSON.parse(modeClient.state) : null;
+        if (st && !st.connected)
+            return;
+        syncing = true;
+        const want = st ? st.tabs : [];
+        let list = tabs.slice();
+        const made = [];
+        for (const w of want) {
+            let t = list.find(x => x.modeTab === w.id);
+            const chosen = t && t.modePane !== "" ? w.panes.find(p => p.id === t.modePane) : null;
+            const pane = chosen || w.panes.find(p => p.focused) || w.panes[0];
+            const terminal = pane ? pane.terminal : w.terminal;
+            if (!terminal)
+                continue;
+            if (t && t.modeTerminal !== terminal) {
+                // Another pane: a new attachment in the same place
+                const old = t;
+                t = termComponent.createObject(stack, { cwd: pane ? pane.cwd : w.cwd, command: modeClient.attachCommand(terminal), modeTab: w.id, modeTerminal: terminal, modePane: old.modePane, visible: false });
+                list[list.indexOf(old)] = t;
+                old.closeSession();
+                old.destroy();
+            } else if (!t) {
+                t = termComponent.createObject(stack, { cwd: pane ? pane.cwd : w.cwd, command: modeClient.attachCommand(terminal), modeTab: w.id, modeTerminal: terminal, visible: false });
+                list.push(t);
+            }
+            t.modeLabel = w.label;
+            t.modeStatus = w.status || "";
+            made.push(t);
+        }
+        // Tabs of herdr that went away (closed, another workspace, the mode stopped)
+        for (const t of list.filter(x => x.modeTab !== "" && made.indexOf(x) < 0)) {
+            t.closeSession();
+            t.destroy();
+        }
+        const shown = view;
+        const others = list.filter(x => x.modeTab === "");
+        const at = Math.min(modeAt, others.length);
+        tabs = others.slice(0, at).concat(made).concat(others.slice(at));
+        syncing = false;
+        // Show the tab herdr has active when it changed there (a click on an agent, another workspace), or when the tab
+        // shown is gone
+        const active = want.find(w => w.active);
+        const activeTab = active ? made.find(t => t.modeTab === active.id) : null;
+        if (activeTab && (active.id !== modeActive || tabs.indexOf(shown) < 0) && (shown === null || shown.modeTab !== "" || tabs.indexOf(shown) < 0 || modeActive === ""))
+            select(tabs.indexOf(activeTab));
+        else if (tabs.indexOf(shown) >= 0)
+            current = tabs.indexOf(shown);
+        else if (tabs.length > 0)
+            select(Math.min(current, tabs.length - 1));
+        modeActive = active ? active.id : "";
+        if (tabs.length === 0 && !st)
+            win.close();
+    }
+    // Sidebar: herdr's sections, then the panes of the tab shown when it has several
+    readonly property var sidebarModel: {
+        if (!modeState)
+            return null;
+        const v = view;
+        const w = v && v.modeTab !== "" ? modeState.tabs.find(x => x.id === v.modeTab) : null;
+        if (!w || w.panes.length < 2)
+            return modeState;
+        const panes = { key: "panes", title: "Panes", add: false, items: w.panes.map(p => ({ id: p.id, label: p.label, detail: "", status: p.status, active: p.terminal === v.modeTerminal })) };
+        return Object.assign({}, modeState, { sections: modeState.sections.concat([panes]) });
+    }
+
     // Context for the assistant (Mod+Y): the terminal of the active window, a moment after each change
     Timer {
         id: contextTimer
@@ -143,7 +281,8 @@ Window {
     function run(name) {
         const v = win.view;
         if (name === "about") aboutCard.show();
-        else if (name === "new-tab") win.addTab(0, v ? v.cwd : win.cwd, []);
+        // In herdr's tabs, a new tab of herdr
+        else if (name === "new-tab") { if (v && v.modeTab !== "" && modeState) modeAct({ op: "new-tab" }); else win.addTab(0, v ? v.cwd : win.cwd, []) }
         else if (name === "new-window") Instance.newWindow(v ? v.cwd : win.cwd);
         else if (name === "close-tab") { if (v) win.closeTab(v, true) }
         else if (name === "close-window") win.close();
@@ -156,6 +295,7 @@ Window {
         else if (name === "show-in-files") Aeroport.showInFiles(v ? v.cwd : win.cwd);
         else if (name === "window-actions") windowPanel.visible ? windowPanel.close() : windowPanel.open();
         else if (name === "toggle-window-buttons") win.toggleWindowButtons();
+        else if (name === "toggle-sidebar") win.toggleSidebar();
         else if (v) {
             if (name === "copy") v.copy();
             else if (name === "paste") v.paste();
@@ -170,12 +310,15 @@ Window {
             else if (name === "ask-rob") win.askRob(v.lastBlock());
             else if (name === "edit-output") v.editBlock(v.lastBlock());
             else if (name === "find") win.openSearch();
+            else if (name === "integrate") win.integrate();
             else if (name === "find-next") { if (v.searchActive) v.searchStep(1); else win.openSearch() }
             else if (name === "find-previous") { if (v.searchActive) v.searchStep(-1); else win.openSearch() }
         }
     }
 
-    Component.onCompleted: addTab(attachId, cwd, command)
+    // `fili-term mode herdr`: the window opens on herdr's tabs only
+    property string initialMode: ""
+    Component.onCompleted: initialMode !== "" ? startMode(initialMode, null) : addTab(attachId, cwd, command)
     signal closed()
     onClosing: {
         for (const t of tabs)
@@ -191,6 +334,22 @@ Window {
             // Result of a command that ended while this tab was not shown, until the tab is selected
             property bool unseen: false
             property int lastExit: 0
+            // A tab of herdr: its tab id, the terminal attached, the pane chosen in the sidebar ("" the focused one),
+            // its label and the status of its agents
+            property string modeTab: ""
+            property string modeTerminal: ""
+            property string modePane: ""
+            property string modeLabel: ""
+            property string modeStatus: ""
+            // The user said "Not Now" to the offer: not asked again while the program stays in the foreground
+            property string declined: ""
+            onForegroundChanged: {
+                const kind = win.modeKind(foreground);
+                if (kind === "")
+                    declined = "";
+                else if (win.integrable(term) !== "" && win.modePolicies[kind] === "auto" && declined !== kind)
+                    win.startMode(kind, term);
+            }
             anchors.fill: parent
             fontFamily: FiliTheme.mono
             fontPixelSize: win.fontSize
@@ -280,7 +439,7 @@ Window {
     // Tabs, from two: one per shell of the window (Facteur's look); middle click or × closes one
     Rectangle {
         id: tabRow
-        visible: win.tabs.length > 1
+        visible: win.tabs.length > 1 || win.modeState !== null
         anchors { left: parent.left; right: parent.right; top: toolbarLine.bottom }
         height: visible ? FiliTheme.tabBarHeight : 0
         color: FiliTheme.background
@@ -304,20 +463,21 @@ Window {
                     // command ended while the tab was not shown
                     readonly property var term: win.tabs[index]
                     readonly property string running: { term.blocksRevision; return term.runningCommand() }
-                    readonly property string state: running !== "" ? "running" : term.unseen ? (term.lastExit === 0 ? "ok" : "failed") : ""
+                    readonly property string state: term.modeTab !== "" ? (term.modeStatus === "working" ? "running" : term.modeStatus === "blocked" ? "waiting" : term.modeStatus === "done" ? "ok" : "")
+                        : running !== "" ? "running" : term.unseen ? (term.lastExit === 0 ? "ok" : "failed") : ""
                     Icon {
                         id: stateIcon
                         visible: tab.state !== ""
                         anchors { left: parent.left; leftMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
-                        name: tab.state === "running" ? "refresh" : tab.state === "ok" ? "check" : "x"
+                        name: tab.state === "running" ? "refresh" : tab.state === "ok" ? "check" : tab.state === "waiting" ? "bell" : "x"
                         size: 12
-                        color: tab.state === "failed" ? FiliTheme.danger : tab.state === "running" ? FiliTheme.accentColor : FiliTheme.textSecondary
+                        color: tab.state === "failed" ? FiliTheme.danger : tab.state === "waiting" ? FiliTheme.warning : tab.state === "running" ? FiliTheme.accentColor : FiliTheme.textSecondary
                         RotationAnimator on rotation { running: tab.state === "running" && win.active; from: 0; to: 360; duration: 1400; loops: Animation.Infinite }
                     }
                     Text {
                         id: label
                         anchors { left: stateIcon.visible ? stateIcon.right : parent.left; leftMargin: stateIcon.visible ? FiliTheme.space2 : FiliTheme.space4; right: parent.right; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
-                        text: tab.running !== "" ? tab.running : win.tabTitle(win.tabs[tab.index])
+                        text: tab.running !== "" && tab.term.modeTab === "" ? tab.running : win.tabTitle(win.tabs[tab.index])
                         elide: Text.ElideRight
                         font.family: FiliTheme.font
                         font.pixelSize: FiliTheme.sizeList
@@ -349,10 +509,29 @@ Window {
         Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: FiliTheme.borderWidth; color: FiliTheme.border }
     }
 
+    // Sidebar of herdr: workspaces, agents, the panes of the tab shown
+    Sidebar {
+        id: sidebar
+        visible: win.sidebarShown
+        anchors { left: parent.left; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
+        width: visible ? FiliTheme.sidebarWidth : 0
+        mode: win.sidebarModel
+        onActivated: (section, id) => {
+            if (section === "panes") {
+                if (win.view) { win.view.modePane = id; win.syncMode() }
+            } else {
+                win.modeAct({ op: "select", section: section, id: id });
+            }
+            win.refocus();
+        }
+        onAdded: section => { win.modeAct({ op: "new", section: section }); win.refocus() }
+        onLeave: { modeClient.stop(); win.refocus() }
+    }
+
     // The terminals of the window, one shown
     Item {
         id: stack
-        anchors { left: parent.left; right: parent.right; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
+        anchors { left: sidebar.right; right: parent.right; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
     }
 
     // Search in the history, as in Casier: a field in the header (surface, border, accent when focused); without a
@@ -631,12 +810,63 @@ Window {
         Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: FiliTheme.borderWidth; color: FiliTheme.border }
         Text {
             id: where
-            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: modeOffer.wanted ? modeOffer.left : txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
             text: win.view ? Aeroport.shortPath(win.view.cwd) : ""
             elide: Text.ElideMiddle
             font.family: FiliTheme.font
             font.pixelSize: FiliTheme.sizeSmall
             color: FiliTheme.textSecondary
+        }
+        // A program with a mode runs in the tab (herdr): offer to integrate it, never on its own unless [modes] says "auto"
+        Row {
+            id: modeOffer
+            readonly property string kind: win.integrable(win.view)
+            readonly property bool wanted: kind !== "" && win.modePolicies[kind] === "ask" && win.view.declined !== kind
+            visible: wanted
+            anchors { right: txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space5; verticalCenter: parent.verticalCenter }
+            spacing: FiliTheme.space3
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: Aeroport.tr("%1 is running").replace("%1", modeOffer.kind)
+                font.family: FiliTheme.font
+                font.pixelSize: FiliTheme.sizeSmall
+                color: FiliTheme.textSecondary
+            }
+            Repeater {
+                model: [
+                    { label: Aeroport.tr("Integrate"), act: "integrate", accent: true },
+                    { label: Aeroport.tr("Not Now"), act: "later", accent: false },
+                    { label: Aeroport.tr("Don't Ask Again"), act: "never", accent: false }
+                ]
+                Text {
+                    required property var modelData
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.label
+                    font.family: FiliTheme.font
+                    font.pixelSize: FiliTheme.sizeSmall
+                    color: modelData.accent ? FiliTheme.accentColor : offerArea.containsMouse ? FiliTheme.text : FiliTheme.textSecondary
+                    MouseArea {
+                        id: offerArea
+                        anchors { fill: parent; margins: -4 }
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            const v = win.view, kind = modeOffer.kind;
+                            if (parent.modelData.act === "integrate") win.startMode(kind, v);
+                            else if (parent.modelData.act === "later") v.declined = kind;
+                            else {
+                                Aeroport.setModePolicy(kind, "off");
+                                const p = Object.assign({}, win.modePolicies);
+                                p[kind] = "off";
+                                win.modePolicies = p;
+                            }
+                            win.refocus();
+                        }
+                    }
+                    Accessible.role: Accessible.Button
+                    Accessible.name: text
+                }
+            }
         }
         // The latest file transaction (fili-tx: what Rob or a tool just changed), for a couple of minutes, with Undo
         Row {

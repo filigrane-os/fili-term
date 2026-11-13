@@ -24,6 +24,7 @@ use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
 use crate::blocks::{self, Blocks, State};
+use crate::foreground::Foreground;
 use crate::proto::{self, Reader};
 use crate::search::{self, Search};
 use crate::pty_loop::{Msg, PtyLoop, PtySender};
@@ -60,6 +61,8 @@ struct Pending {
     clipboard: Option<String>,
     /// The program wrote to the terminal (the history may have moved under a search)
     output: bool,
+    /// The foreground process changed: the window is told
+    foreground: bool,
     /// Set when the attached connection changes: its writer stops.
     generation: u64,
 }
@@ -141,6 +144,9 @@ struct Session {
     search: Mutex<Option<Search>>,
     command: String,
     started: Instant,
+    /// Process of the shell (or of the command), whose terminal the watcher looks at
+    shell: u32,
+    foreground: Mutex<Foreground>,
 }
 
 #[derive(Default)]
@@ -175,6 +181,10 @@ pub fn run() -> i32 {
         unsafe { std::env::remove_var(var) };
     }
     let daemon = Arc::new(Daemon { next_id: AtomicU32::new(1), ..Default::default() });
+    {
+        let daemon = daemon.clone();
+        std::thread::Builder::new().name("watch".into()).spawn(move || watch(&daemon)).ok();
+    }
     for stream in listener.incoming().flatten() {
         let daemon = daemon.clone();
         std::thread::spawn(move || {
@@ -288,11 +298,15 @@ fn serve(daemon: &Arc<Daemon>, mut stream: UnixStream) -> io::Result<()> {
     };
 
     let result = read_input(&session, &mut stream, &out, &acked);
+    // A session hung up by its window is gone: its terminal state goes with it (not only when its shell's exit is seen)
+    if matches!(result, Ok(true)) {
+        daemon.sessions.lock().unwrap().remove(&session.id);
+    }
     closed.store(true, Ordering::Relaxed);
     session.shared.notify(|_| {});
     acked.1.notify_all();
     let _ = writer.join();
-    result
+    result.map(|_| ())
 }
 
 fn read_size(r: &mut Reader<'_>) -> io::Result<WindowSize> {
@@ -327,6 +341,7 @@ fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>) -> i
         ..Default::default()
     };
     let pty = tty::new(&options, size, id as u64)?;
+    let shell = pty.child().id();
     let shared = Arc::new(Shared {
         pending: Mutex::new(Pending::default()),
         cv: Condvar::new(),
@@ -341,7 +356,17 @@ fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>) -> i
     let pty_loop = PtyLoop::new(term.clone(), blocks.clone(), Listener(shared.clone()), pty)?;
     let _ = shared.sender.set(pty_loop.channel());
     pty_loop.spawn();
-    let session = Arc::new(Session { id, term, shared, blocks, search: Mutex::new(None), command, started: Instant::now() });
+    let session = Arc::new(Session {
+        id,
+        term,
+        shared,
+        blocks,
+        search: Mutex::new(None),
+        command,
+        started: Instant::now(),
+        shell,
+        foreground: Mutex::new(Foreground::default()),
+    });
     daemon.sessions.lock().unwrap().insert(id, session.clone());
     Ok(session)
 }
@@ -351,7 +376,7 @@ fn read_input(
     stream: &mut UnixStream,
     out: &Mutex<UnixStream>,
     acked: &(Mutex<bool>, Condvar),
-) -> io::Result<()> {
+) -> io::Result<bool> {
     loop {
         let (kind, payload) = proto::read_msg(stream)?;
         let mut r = Reader::new(&payload);
@@ -458,7 +483,7 @@ fn read_input(
             proto::CLOSE => {
                 session.shared.send(Msg::Shutdown);
                 // SIGHUP to the shell: the pty is dropped with the event loop
-                return Ok(());
+                return Ok(true);
             }
             _ => {}
         }
@@ -480,6 +505,8 @@ fn write_frames(
     let mut seen_cwd = 0u64;
     // Last search state the window was told (matches, position, active)
     let mut told = (0u32, 0u32, false);
+    // A window that attaches learns the foreground process at once
+    session.shared.notify(|p| p.foreground = true);
     loop {
         // Wait for the window to show the previous frame
         {
@@ -489,19 +516,26 @@ fn write_frames(
             }
         }
         // Then for something to send
-        let (title, exited, bell, clipboard, output) = {
+        let (title, exited, bell, clipboard, output, foreground) = {
             let mut p = session.shared.pending.lock().unwrap();
             loop {
                 if closed.load(Ordering::Relaxed) || p.generation != generation {
                     return Ok(());
                 }
-                if p.dirty || p.title.is_some() || p.exited.is_some() || p.bell || p.clipboard.is_some() {
+                if p.dirty || p.title.is_some() || p.exited.is_some() || p.bell || p.clipboard.is_some() || p.foreground {
                     break;
                 }
                 p = session.shared.cv.wait(p).unwrap();
             }
             p.dirty = false;
-            (p.title.take(), p.exited, std::mem::take(&mut p.bell), p.clipboard.take(), std::mem::take(&mut p.output))
+            (
+                p.title.take(),
+                p.exited,
+                std::mem::take(&mut p.bell),
+                p.clipboard.take(),
+                std::mem::take(&mut p.output),
+                std::mem::take(&mut p.foreground),
+            )
         };
         // Coalesce: everything that arrives within one frame interval goes in one frame
         let since = last.elapsed();
@@ -564,6 +598,13 @@ fn write_frames(
         if bell {
             write_into(&mut out, proto::BELL, &[]);
         }
+        if foreground {
+            let fg = session.foreground.lock().unwrap().clone();
+            let mut b = Vec::new();
+            proto::put_u32(&mut b, fg.pid);
+            b.extend_from_slice(fg.name.as_bytes());
+            write_into(&mut out, proto::FOREGROUND, &b);
+        }
         if let Some(code) = exited {
             write_into(&mut out, proto::EXIT, &code.to_le_bytes());
             stream.lock().unwrap().write_all(&out)?;
@@ -571,6 +612,27 @@ fn write_frames(
             return Ok(());
         }
         stream.lock().unwrap().write_all(&out)?;
+    }
+}
+
+/// Once a second: the process in the foreground of each session (the window offers a mode for a program it knows).
+/// Two small reads of /proc per session.
+fn watch(daemon: &Daemon) {
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let sessions: Vec<Arc<Session>> = daemon.sessions.lock().unwrap().values().cloned().collect();
+        for s in sessions {
+            let Some(fg) = Foreground::of(s.shell) else { continue };
+            let changed = {
+                let mut known = s.foreground.lock().unwrap();
+                let changed = *known != fg;
+                *known = fg.clone();
+                changed
+            };
+            if changed {
+                s.shared.notify(|p| p.foreground = true);
+            }
+        }
     }
 }
 

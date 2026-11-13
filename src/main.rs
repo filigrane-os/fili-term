@@ -4,6 +4,7 @@
 //! window process already running if there is one (one Qt process for every window).
 mod ctl;
 mod gui;
+mod modes;
 mod proto;
 mod window;
 
@@ -17,6 +18,7 @@ fn usage() -> i32 {
          fili-term output [--session ID] [--all] [BLOCK] output of a command (default: the last one)\n       \
          fili-term send [--session ID] TEXT              types TEXT at the prompt, without Enter\n       \
          fili-term keymap [default|mac|tmux|none]         show or choose the keyboard shortcuts\n       \
+         fili-term mode herdr                             herdr's tabs as tabs of the window, its agents in the sidebar\n       \
          fili-term ctl [--pid PID] action NAME | actions\n\n\
          Opens a terminal window (Aéroport); sessions live in the daemon and survive their window.\n\
          --app-id ID: the window gets that Wayland app-id (for compositor rules), in a process of its own.\n\
@@ -36,6 +38,7 @@ fn main() {
         }
         Some("list") => list(),
         Some("keymap") => keymap(&args[1..]),
+        Some("mode") => mode(&args[1..]),
         // Command an open window (menu of the fili-bar); never starts Qt
         Some("ctl") => match ctl::run(&args[1..]) {
             Ok(answer) => {
@@ -95,6 +98,25 @@ fn keymap(args: &[String]) -> i32 {
             2
         }
     }
+}
+
+/// `fili-term mode KIND`: the integrated mode of the program in the window being used (herdr: its tabs as tabs of the
+/// window, its workspaces and agents in the sidebar; its server is started when it does not run)
+fn mode(args: &[String]) -> i32 {
+    let [kind] = args else {
+        eprintln!("usage: fili-term mode herdr");
+        return 2;
+    };
+    if !gui::settings::MODES.contains(&kind.as_str()) {
+        eprintln!("fili-term mode: no integration for {kind} (known: {})", gui::settings::MODES.join(", "));
+        return 2;
+    }
+    let found = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(kind).is_file()));
+    if !found {
+        eprintln!("fili-term mode: {kind} is not installed (not in PATH)");
+        return 1;
+    }
+    open(&["--tab".into(), "--mode".into(), kind.clone()])
 }
 
 fn list() -> i32 {
@@ -165,6 +187,7 @@ fn open(args: &[String]) -> i32 {
     let mut title = String::new();
     let mut hold = false;
     let mut tab = false;
+    let mut mode = String::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -175,6 +198,7 @@ fn open(args: &[String]) -> i32 {
             "--hold" => hold = true,
             "--header" | "--no-header" | "--footer" | "--no-footer" => {}
             "--tab" => tab = true,
+            "--mode" => mode = it.next().cloned().unwrap_or_default().replace([',', '\t'], ""),
             "-T" | "--title" => title = it.next().cloned().unwrap_or_default(),
             "--app-id" => app_id = it.next().cloned(),
             // foot's spelling, so a script can switch terminal by changing the program name only
@@ -190,7 +214,9 @@ fn open(args: &[String]) -> i32 {
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     // Request line for the window process: "open\t<attach>\t<cwd>\t<flags>\t<title>\t<argv…>" (tabs never appear in a cwd we accept)
     let clean = |t: &str| t.replace(['\t', '\n'], " ");
-    let mut request = format!("open\t{attach}\t{cwd}\t{}\t{}", [hold.then_some("hold"), tab.then_some("tab")].into_iter().flatten().collect::<Vec<_>>().join(","), clean(&title));
+    let mode = (!mode.is_empty()).then(|| format!("mode={mode}"));
+    let flags: Vec<&str> = [hold.then_some("hold"), tab.then_some("tab"), mode.as_deref()].into_iter().flatten().collect();
+    let mut request = format!("open\t{attach}\t{cwd}\t{}\t{}", flags.join(","), clean(&title));
     for a in &command {
         request.push('\t');
         request.push_str(&clean(a));

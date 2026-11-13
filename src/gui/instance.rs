@@ -34,7 +34,7 @@ pub mod qobject {
         /// Open a window on a session (attach > 0) or on a new one (cwd, command)
         #[qsignal]
         #[cxx_name = "openRequested"]
-        fn open_requested(self: Pin<&mut Instance>, attach: i32, cwd: QString, hold: bool, tab: bool, title: QString, command: QStringList);
+        fn open_requested(self: Pin<&mut Instance>, attach: i32, cwd: QString, hold: bool, tab: bool, title: QString, command: QStringList, mode: QString);
 
         /// Called by Main.qml once loaded: opens the first window and starts listening
         #[qinvokable]
@@ -54,7 +54,7 @@ pub struct InstanceRust {
 }
 
 impl qobject::Instance {
-    /// "open\t<attach id>\t<cwd>\t<flags>\t<title>\t<argv…>"
+    /// "open\t<attach id>\t<cwd>\t<flags>\t<title>\t<argv…>", flags: hold, tab, mode=KIND
     fn handle(self: Pin<&mut Self>, request: &str) {
         let mut parts = request.split('\t');
         if parts.next() != Some("open") {
@@ -64,12 +64,14 @@ impl qobject::Instance {
         let cwd = QString::from(parts.next().unwrap_or(""));
         let flags = parts.next().unwrap_or("");
         let (hold, tab) = (flags.split(',').any(|f| f == "hold"), flags.split(',').any(|f| f == "tab"));
+        // Integrated mode of the tab (`fili-term mode herdr`)
+        let mode = QString::from(flags.split(',').find_map(|f| f.strip_prefix("mode=")).unwrap_or(""));
         let title = QString::from(parts.next().unwrap_or(""));
         let mut command = QStringList::default();
         for a in parts {
             command.append(QString::from(a));
         }
-        self.open_requested(attach, cwd, hold, tab, title, command);
+        self.open_requested(attach, cwd, hold, tab, title, command, mode);
     }
 
     fn start(mut self: Pin<&mut Self>) {
@@ -105,6 +107,6 @@ impl qobject::Instance {
 
     fn new_window(self: Pin<&mut Self>, cwd: &QString) {
         let cwd = if cwd.is_empty() { std::env::var("HOME").unwrap_or_default() } else { cwd.to_string() };
-        self.open_requested(0, QString::from(&cwd), false, false, QString::default(), QStringList::default());
+        self.open_requested(0, QString::from(&cwd), false, false, QString::default(), QStringList::default(), QString::default());
     }
 }

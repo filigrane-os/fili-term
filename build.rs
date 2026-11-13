@@ -30,6 +30,7 @@ fn main() {
                 "qml/FocusRing.qml",
                 "qml/Icon.qml",
                 "qml/IconButton.qml",
+                "qml/Sidebar.qml",
             ])
             .qml_file(QmlFile::from("qml/FiliTheme.qml").singleton(true))
             .depend("QtQuick"),
@@ -41,7 +42,7 @@ fn main() {
         "data/icons/hicolor/scalable/apps/fili-term.svg",
     ])
     .qt_module("Quick")
-    .files(["src/gui/terminal.rs", "src/gui/instance.rs", "src/gui/app.rs"])
+    .files(["src/gui/terminal.rs", "src/gui/instance.rs", "src/gui/app.rs", "src/gui/mode.rs"])
     .build();
     // cxx-qt names the Qt libraries before its generated archive; with --as-needed, ld drops Qt Quick before it sees
     // the item that needs it (Facteur and Casier escape this through their library crate)

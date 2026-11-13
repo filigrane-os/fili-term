@@ -6,8 +6,12 @@ use super::theme::{Val, parse_sections};
 /// (key, default, smallest, largest)
 const NUMBERS: &[(&str, i64, i64, i64)] = &[("font_size", 12, 6, 48), ("padding", 10, 0, 64), ("line_spacing", 0, 0, 24), ("notify_after", 10, 0, 86400)];
 const SWITCHES: &[(&str, bool)] = &[("window_buttons", true)];
+/// Integrated modes (`[modes]`): what to do when such a program is seen in a tab
+pub const MODES: &[&str] = &["herdr"];
+pub const MODE_POLICIES: &[&str] = &["ask", "auto", "off"];
 
-/// The settings as JSON for the QML: {"font_size": 12, "padding": 10, "line_spacing": 0, "notify_after": 10, "window_buttons": true}
+/// The settings as JSON for the QML: {"font_size": 12, "padding": 10, "line_spacing": 0, "notify_after": 10,
+/// "window_buttons": true, "modes": {"herdr": "ask"}}
 pub fn json_from(text: &str) -> String {
     let sections = parse_sections(text);
     let top = sections.get("");
@@ -24,7 +28,68 @@ pub fn json_from(text: &str) -> String {
         let v = value(key).and_then(|v| v.parse::<bool>().ok()).unwrap_or(*default);
         parts.push(format!("\"{key}\":{v}"));
     }
+    let modes = sections.get("modes");
+    let policies: Vec<String> = MODES
+        .iter()
+        .map(|kind| {
+            let v = match modes.and_then(|m| m.get(*kind)) {
+                Some(Val::Str(v)) if MODE_POLICIES.contains(&v.as_str()) => v.as_str(),
+                _ => "ask",
+            };
+            format!("\"{kind}\":\"{v}\"")
+        })
+        .collect();
+    parts.push(format!("\"modes\":{{{}}}", policies.join(",")));
     format!("{{{}}}", parts.join(","))
+}
+
+/// The file with `key = "value"` set in `[section]` (the line replaced, or added at the end of the section, or the
+/// section added at the end of the file); comments and other lines stay as they are
+pub fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
+    let line = format!("{key} = \"{value}\"");
+    let header = format!("[{section}]");
+    let mut out: Vec<String> = Vec::new();
+    let (mut inside, mut done) = (false, false);
+    for l in text.lines() {
+        let t = l.trim();
+        if t.starts_with('[') {
+            if inside && !done {
+                // End of our section: the value goes before the blank lines that close it
+                let at = out.iter().rposition(|x| !x.trim().is_empty()).map_or(out.len(), |i| i + 1);
+                out.insert(at, line.clone());
+                done = true;
+            }
+            inside = t == header;
+        } else if inside && !done && !t.starts_with('#') && t.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
+            out.push(line.clone());
+            done = true;
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    if !done {
+        if !inside {
+            if out.last().is_some_and(|l| !l.trim().is_empty()) {
+                out.push(String::new());
+            }
+            out.push(header);
+        }
+        out.push(line);
+    }
+    out.join("\n") + "\n"
+}
+
+/// `[modes] KIND = "POLICY"` in fili-term.toml (the footer's "Don't Ask Again", the menu)
+pub fn set_mode_policy(kind: &str, policy: &str) -> std::io::Result<()> {
+    if !MODES.contains(&kind) || !MODE_POLICIES.contains(&policy) {
+        return Err(std::io::Error::other("unknown mode or policy"));
+    }
+    let path = super::theme::path();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, with_value(&text, "modes", kind, policy))
 }
 
 pub fn json() -> String {
@@ -37,12 +102,32 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(json_from(""), "{\"font_size\":12,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":true}");
+        assert_eq!(json_from(""), "{\"font_size\":12,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":true,\"modes\":{\"herdr\":\"ask\"}}");
     }
 
     #[test]
     fn top_keys_only_and_valid_values() {
         let text = "font_size = 14 # bigger\npadding = 999\nwindow_buttons = false\n[theme]\nfont_size = 30\n";
-        assert_eq!(json_from(text), "{\"font_size\":14,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":false}");
+        assert_eq!(json_from(text), "{\"font_size\":14,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":false,\"modes\":{\"herdr\":\"ask\"}}");
+    }
+
+    #[test]
+    fn modes() {
+        assert!(json_from("[modes]\nherdr = \"auto\"\n").contains("\"modes\":{\"herdr\":\"auto\"}"));
+        assert!(json_from("[modes]\nherdr = \"never\"\n").contains("\"modes\":{\"herdr\":\"ask\"}"));
+    }
+
+    #[test]
+    fn set_a_value() {
+        assert_eq!(with_value("", "modes", "herdr", "off"), "[modes]\nherdr = \"off\"\n");
+        assert_eq!(with_value("font_size = 13\n", "modes", "herdr", "off"), "font_size = 13\n\n[modes]\nherdr = \"off\"\n");
+        assert_eq!(
+            with_value("[modes]\n# herdr = \"ask\"\nherdr = \"auto\"\n\n[keys]\nfind = \"\"\n", "modes", "herdr", "off"),
+            "[modes]\n# herdr = \"ask\"\nherdr = \"off\"\n\n[keys]\nfind = \"\"\n"
+        );
+        assert_eq!(
+            with_value("[modes]\nnvim = \"ask\"\n\n[keys]\n", "modes", "herdr", "off"),
+            "[modes]\nnvim = \"ask\"\nherdr = \"off\"\n\n[keys]\n"
+        );
     }
 }

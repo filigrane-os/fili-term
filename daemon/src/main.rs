@@ -3,6 +3,7 @@
 #[path = "../../src/proto.rs"]
 mod proto;
 mod blocks;
+mod foreground;
 mod pty_loop;
 mod search;
 mod session;
