@@ -4,6 +4,7 @@
 mod proto;
 mod blocks;
 mod pty_loop;
+mod search;
 mod session;
 
 fn main() {

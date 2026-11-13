@@ -10,6 +10,9 @@ Window {
     property int attachId: 0
     property string cwd: ""
     property var command: []
+    // --hold: a tab whose command ended stays open (its last screen is still there) until it is closed
+    property bool hold: false
+    property string initialTitle: ""
     property var tabs: []
     property int current: -1
     readonly property var view: current >= 0 && current < tabs.length ? tabs[current] : null
@@ -23,6 +26,19 @@ Window {
         const kept = Aeroport.uiGet("window_buttons");
         return kept === "" ? settings.window_buttons : kept !== "0";
     }
+    // Header and footer follow Settings > Appearance (fili-theme header|footer on|off) live. A hidden footer still
+    // appears while it has something to say (the latest file transaction); nothing is reachable only from the header
+    property bool showHeader: Aeroport.windowPart("header")
+    property bool showFooter: Aeroport.windowPart("footer")
+    readonly property bool headerShown: showHeader
+    readonly property bool footerShown: showFooter || txNotice.wanted
+    Connections {
+        target: Aeroport
+        function onWindowChanged() {
+            win.showHeader = Aeroport.windowPart("header");
+            win.showFooter = Aeroport.windowPart("footer");
+        }
+    }
     function toggleWindowButtons() {
         windowButtons = !windowButtons;
         Aeroport.uiSet("window_buttons", windowButtons ? "1" : "0");
@@ -34,10 +50,10 @@ Window {
     minimumHeight: 200
     visible: true
     color: FiliTheme.background
-    title: view && view.title ? view.title : "Aéroport"
+    title: view && view.title ? view.title : initialTitle !== "" ? initialTitle : "Aéroport"
 
     function tabTitle(t) {
-        return !t ? "" : t.title ? t.title : Aeroport.shortPath(t.cwd);
+        return !t ? "" : t.title ? t.title : win.initialTitle !== "" ? win.initialTitle : Aeroport.shortPath(t.cwd);
     }
     function addTab(attach, dir, argv) {
         const t = termComponent.createObject(stack, { sessionId: attach, cwd: dir, command: argv || [] });
@@ -52,6 +68,7 @@ Window {
             tabs[k].visible = k === i;
             tabs[k].setShown(k === i);
         }
+        tabs[i].unseen = false;
         tabs[i].forceActiveFocus();
     }
     function step(delta) {
@@ -99,6 +116,24 @@ Window {
         function onCwdChanged() { contextTimer.restart() }
     }
 
+    // Search in the history (Ctrl+Shift+F): the bar at the top right of the terminal, the matches are lit in the grid
+    property bool searching: false
+    function openSearch() {
+        searching = true;
+        searchField.forceActiveFocus();
+        searchField.selectAll();
+        if (view && searchField.text !== "")
+            view.search(searchField.text);
+    }
+    function closeSearch() {
+        searching = false;
+        searchField.text = "";
+        if (view)
+            view.searchClose();
+        refocus();
+    }
+    onCurrentChanged: if (searching) closeSearch()
+
     function refocus() {
         if (view && !aboutCard.visible && !windowPanel.visible)
             view.forceActiveFocus();
@@ -112,11 +147,13 @@ Window {
         else if (name === "new-window") Instance.newWindow(v ? v.cwd : win.cwd);
         else if (name === "close-tab") { if (v) win.closeTab(v, true) }
         else if (name === "close-window") win.close();
+        else if (name.startsWith("tab-")) { const n = parseInt(name.slice(4)); win.select(n === 9 ? win.tabs.length - 1 : n - 1) }
         else if (name === "next-tab") win.step(1);
         else if (name === "previous-tab") win.step(-1);
         else if (name === "zoom-in") win.zoom(1);
         else if (name === "zoom-out") win.zoom(-1);
         else if (name === "zoom-reset") win.zoom(0);
+        else if (name === "show-in-files") Aeroport.showInFiles(v ? v.cwd : win.cwd);
         else if (name === "window-actions") windowPanel.visible ? windowPanel.close() : windowPanel.open();
         else if (name === "toggle-window-buttons") win.toggleWindowButtons();
         else if (v) {
@@ -131,6 +168,10 @@ Window {
             else if (name === "copy-last-output") v.copyBlock(v.lastBlock(), 0);
             else if (name === "copy-last-command") v.copyCommand(v.lastBlock());
             else if (name === "ask-rob") win.askRob(v.lastBlock());
+            else if (name === "edit-output") v.editBlock(v.lastBlock());
+            else if (name === "find") win.openSearch();
+            else if (name === "find-next") { if (v.searchActive) v.searchStep(1); else win.openSearch() }
+            else if (name === "find-previous") { if (v.searchActive) v.searchStep(-1); else win.openSearch() }
         }
     }
 
@@ -147,13 +188,27 @@ Window {
         id: termComponent
         TerminalView {
             id: term
+            // Result of a command that ended while this tab was not shown, until the tab is selected
+            property bool unseen: false
+            property int lastExit: 0
             anchors.fill: parent
             fontFamily: FiliTheme.mono
             fontPixelSize: win.fontSize
             padding: win.settings.padding
+            lineSpacing: win.settings.line_spacing
             colors: FiliTheme.terminalColors
-            onExited: win.closeTab(term, false)
+            onExited: if (!(win.hold && term.command.length > 0)) win.closeTab(term, false)
             onBell: win.alert(0)
+            // A long command ended while nobody watches this terminal: a notification with its result
+            onCommandFinished: (command, exit, duration) => {
+                const after = win.settings.notify_after;
+                if (term !== win.view) { term.unseen = true; term.lastExit = exit }
+                if (after <= 0 || duration < after * 1000 || (win.active && term === win.view))
+                    return;
+                const text = command.trim().replace(/\s+/g, " ");
+                Aeroport.notify(exit === 0 ? Aeroport.tr("Command finished") : Aeroport.tr("Command failed (status %1)").replace("%1", exit),
+                                (text.length > 100 ? text.slice(0, 100) + "…" : text) + " · " + Aeroport.duration(duration));
+            }
         }
     }
 
@@ -161,10 +216,11 @@ Window {
     Rectangle {
         id: toolbar
         width: parent.width
-        height: FiliTheme.toolbarHeight
+        visible: win.headerShown
+        height: win.headerShown ? FiliTheme.toolbarHeight : 0
         color: FiliTheme.background
         Text {
-            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: tools.left; rightMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: searchBar.inHeader ? searchBar.left : tools.left; rightMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
             text: win.tabTitle(win.view)
             elide: Text.ElideRight
             font.family: FiliTheme.font
@@ -216,7 +272,8 @@ Window {
         id: toolbarLine
         anchors.top: toolbar.bottom
         width: parent.width
-        height: FiliTheme.borderWidth
+        visible: win.headerShown
+        height: win.headerShown ? FiliTheme.borderWidth : 0
         color: FiliTheme.border
     }
 
@@ -238,15 +295,29 @@ Window {
                     readonly property bool on: index === win.current
                     readonly property bool hovered: tabArea.containsMouse || closeTabArea.containsMouse
                     // Readable width (80 to 180), shared out when the row is full
-                    width: Math.max(80, Math.min(180, label.implicitWidth + 2 * FiliTheme.space4 + 16,
+                    width: Math.max(80, Math.min(180, label.implicitWidth + 2 * FiliTheme.space4 + 16 + (tab.state !== "" ? 18 : 0),
                                                  (tabRow.width - 2 * FiliTheme.margin) / win.tabs.length - FiliTheme.space3))
                     height: FiliTheme.tabHeight
                     radius: FiliTheme.radiusControl
                     color: on ? FiliTheme.surfaceActive : hovered ? FiliTheme.surfaceHover : "transparent"
+                    // What the tab does: the command being run (spinner), else the folder; a check or a cross when a
+                    // command ended while the tab was not shown
+                    readonly property var term: win.tabs[index]
+                    readonly property string running: { term.blocksRevision; return term.runningCommand() }
+                    readonly property string state: running !== "" ? "running" : term.unseen ? (term.lastExit === 0 ? "ok" : "failed") : ""
+                    Icon {
+                        id: stateIcon
+                        visible: tab.state !== ""
+                        anchors { left: parent.left; leftMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
+                        name: tab.state === "running" ? "refresh" : tab.state === "ok" ? "check" : "x"
+                        size: 12
+                        color: tab.state === "failed" ? FiliTheme.danger : tab.state === "running" ? FiliTheme.accentColor : FiliTheme.textSecondary
+                        RotationAnimator on rotation { running: tab.state === "running" && win.active; from: 0; to: 360; duration: 1400; loops: Animation.Infinite }
+                    }
                     Text {
                         id: label
-                        anchors { left: parent.left; leftMargin: FiliTheme.space4; right: parent.right; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
-                        text: win.tabTitle(win.tabs[tab.index])
+                        anchors { left: stateIcon.visible ? stateIcon.right : parent.left; leftMargin: stateIcon.visible ? FiliTheme.space2 : FiliTheme.space4; right: parent.right; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
+                        text: tab.running !== "" ? tab.running : win.tabTitle(win.tabs[tab.index])
                         elide: Text.ElideRight
                         font.family: FiliTheme.font
                         font.pixelSize: FiliTheme.sizeList
@@ -284,6 +355,162 @@ Window {
         anchors { left: parent.left; right: parent.right; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
     }
 
+    // Search in the history, as in Casier: a field in the header (surface, border, accent when focused); without a
+    // header it appears over the top right of the terminal while it is used. Counter inside, Enter / Shift+Enter move
+    Rectangle {
+        id: searchBar
+        readonly property bool inHeader: win.headerShown
+        visible: inHeader || win.searching
+        x: inHeader ? toolbar.x + tools.x - width - searchNav.width - FiliTheme.space3 - FiliTheme.space1 : stack.x + stack.width - width - searchNav.width - FiliTheme.space4 - 12 - FiliTheme.space1
+        y: inHeader ? (toolbar.height - height) / 2 : stack.y + FiliTheme.space3
+        z: 60
+        width: inHeader ? 180 : 240
+        height: 26
+        radius: FiliTheme.radiusControl
+        color: FiliTheme.surface
+        border.width: FiliTheme.borderWidth
+        border.color: searchField.activeFocus ? FiliTheme.accentColor : FiliTheme.border
+        readonly property bool none: win.view !== null && win.view.searchActive && win.view.searchCount === 0
+        Text {
+            anchors { left: parent.left; leftMargin: FiliTheme.space2; verticalCenter: parent.verticalCenter }
+            visible: searchField.text === ""
+            text: Aeroport.tr("Search")
+            font.family: FiliTheme.font
+            font.pixelSize: FiliTheme.size
+            color: FiliTheme.muted
+        }
+        TextInput {
+            id: searchField
+            anchors { left: parent.left; leftMargin: FiliTheme.space2; right: counter.visible ? counter.left : clear.visible ? clear.left : parent.right; rightMargin: FiliTheme.space2; verticalCenter: parent.verticalCenter }
+            clip: true
+            selectByMouse: true
+            font.family: FiliTheme.font
+            font.pixelSize: FiliTheme.size
+            color: FiliTheme.text
+            selectionColor: FiliTheme.surfaceActive
+            selectedTextColor: FiliTheme.text
+            Accessible.name: Aeroport.tr("Find in History")
+            onTextChanged: if (win.view) win.view.search(text)
+            onActiveFocusChanged: {
+                if (activeFocus)
+                    win.searching = true;
+                else if (text === "")
+                    win.searching = false;
+            }
+            Keys.onPressed: e => {
+                if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
+                    if (win.view) win.view.searchStep(e.modifiers & Qt.ShiftModifier ? -1 : 1);
+                    e.accepted = true;
+                } else if (e.key === Qt.Key_Escape) {
+                    win.closeSearch();
+                    e.accepted = true;
+                }
+            }
+        }
+        Text {
+            id: counter
+            anchors { right: clear.visible ? clear.left : parent.right; rightMargin: FiliTheme.space2; verticalCenter: parent.verticalCenter }
+            visible: searchField.text !== "" && win.view !== null && win.view.searchActive
+            text: searchBar.none ? Aeroport.tr("No results") : Aeroport.tr("%1 of %2").replace("%1", win.view ? win.view.searchPosition : 0).replace("%2", win.view ? win.view.searchCount : 0)
+            font.family: FiliTheme.font
+            font.pixelSize: FiliTheme.sizeSmall
+            color: searchBar.none ? FiliTheme.danger : FiliTheme.textSecondary
+        }
+        // Clears the search (without a header it also closes the field)
+        Rectangle {
+            id: clear
+            visible: searchField.text !== ""
+            anchors { right: parent.right; rightMargin: FiliTheme.space1; verticalCenter: parent.verticalCenter }
+            width: 20
+            height: 20
+            radius: FiliTheme.radiusControl
+            color: clearArea.containsMouse ? FiliTheme.alpha(FiliTheme.text, 0.12) : "transparent"
+            Icon { anchors.centerIn: parent; name: "x"; size: 12; color: FiliTheme.textSecondary }
+            MouseArea {
+                id: clearArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: { if (searchBar.inHeader) { searchField.text = ""; searchField.forceActiveFocus() } else win.closeSearch() }
+            }
+            Accessible.role: Accessible.Button
+            Accessible.name: Aeroport.tr("Clear")
+        }
+    }
+
+    // Previous and next match, at the right of the field
+    Row {
+        id: searchNav
+        visible: searchBar.visible
+        x: searchBar.x + searchBar.width + FiliTheme.space1
+        y: searchBar.y + (searchBar.height - 24) / 2
+        z: 60
+        IconButton { name: "chevron-left"; tip: Aeroport.tr("Previous Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-previous") }
+        IconButton { name: "chevron-right"; tip: Aeroport.tr("Next Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-next") }
+    }
+
+    // Scroll bar of the history: a thin handle at the right edge, shown while scrolling, on hover and when dragged
+    Item {
+        id: scrollBar
+        readonly property var v: win.view
+        readonly property int history: v ? v.historySize : 0
+        readonly property int rows: v ? Math.max(1, v.lines) : 1
+        readonly property real thumbHeight: Math.max(32, Math.min(height, height * rows / (rows + history)))
+        // 0 at the top of the history, 1 at the prompt
+        readonly property real fraction: history > 0 ? 1 - v.scrollOffset / history : 1
+        anchors { right: stack.right; top: stack.top; bottom: stack.bottom }
+        width: 14
+        z: 50
+        visible: history > 0
+        Rectangle {
+            id: thumb
+            x: parent.width - width - 3
+            width: grip.containsMouse || grip.drag.active ? 8 : 6
+            height: scrollBar.thumbHeight
+            radius: width / 2
+            color: FiliTheme.alpha(FiliTheme.text, grip.drag.active ? 0.55 : grip.containsMouse ? 0.45 : 0.3)
+            opacity: grip.containsMouse || grip.drag.active || hold.running ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 180 } }
+            Behavior on width { NumberAnimation { duration: 100 } }
+        }
+        Binding { target: thumb; property: "y"; value: scrollBar.fraction * (scrollBar.height - thumb.height); when: !grip.drag.active }
+        Timer { id: hold; interval: 700 }
+        Connections {
+            target: scrollBar.v
+            function onScrollOffsetChanged() { hold.restart() }
+            function onHistorySizeChanged() { hold.restart() }
+        }
+        MouseArea {
+            id: grip
+            anchors.fill: parent
+            hoverEnabled: true
+            drag.target: thumb
+            drag.axis: Drag.YAxis
+            drag.minimumY: 0
+            drag.maximumY: scrollBar.height - thumb.height
+            function follow(y) {
+                const span = scrollBar.height - thumb.height;
+                if (span > 0 && scrollBar.v)
+                    scrollBar.v.scrollToOffset(Math.round((1 - Math.max(0, Math.min(1, y / span))) * scrollBar.history));
+            }
+            // A click beside the handle jumps there; the handle then follows the cursor
+            onPressed: e => { if (e.y < thumb.y || e.y > thumb.y + thumb.height) follow(e.y - thumb.height / 2) }
+            onPositionChanged: if (grip.drag.active) follow(thumb.y)
+        }
+    }
+
+    // Files dragged from Casier (or any file manager): their paths are typed at the prompt
+    DropArea {
+        anchors.fill: stack
+        keys: ["text/uri-list"]
+        onDropped: drop => {
+            if (drop.hasUrls && win.view) {
+                win.view.dropPaths(drop.urls.join("\n"));
+                drop.accept();
+                win.view.forceActiveFocus();
+            }
+        }
+    }
+
     // Command blocks: actions on the block under the pointer, at the right of its first line (pinned to the top of
     // the view while that line is scrolled out). Takes no button: clicks and the wheel go on to the terminal.
     MouseArea {
@@ -292,13 +519,16 @@ Window {
         hoverEnabled: true
         acceptedButtons: Qt.NoButton
         property var block: null
+        // A link under the pointer with Ctrl held: underlined, hand cursor
+        property bool link: false
+        cursorShape: link ? Qt.PointingHandCursor : Qt.ArrowCursor
         function look() {
             const v = win.view;
             const j = v && containsMouse ? v.blockAt(mouseY) : "";
             block = j ? JSON.parse(j) : null;
         }
-        onPositionChanged: look()
-        onContainsMouseChanged: look()
+        onPositionChanged: mouse => { look(); link = win.view !== null && win.view.linkAt(mouseX, mouseY, (mouse.modifiers & Qt.ControlModifier) !== 0) }
+        onContainsMouseChanged: { look(); if (!containsMouse) { link = false; if (win.view) win.view.linkAt(0, 0, false) } }
         Connections {
             target: win.view
             function onBlocksRevisionChanged() { blockHover.look() }
@@ -323,7 +553,7 @@ Window {
                 spacing: FiliTheme.space1
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    readonly property var hovered: [copyOut, copyCmd, rerun, rob].find(x => x.hovered)
+                    readonly property var hovered: [copyOut, copyCmd, rerun, edit, files, rob].find(x => x.hovered)
                     text: hovered ? hovered.tip : blockBar.status()
                     leftPadding: FiliTheme.space3
                     rightPadding: FiliTheme.space2
@@ -355,6 +585,21 @@ Window {
                     onClicked: win.view.rerunBlock(blockBar.b.id)
                 }
                 IconButton {
+                    id: edit
+                    readonly property bool hovered: containsMouse
+                    name: "compose"
+                    tip: Aeroport.tr("Edit Output")
+                    enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
+                    onClicked: win.view.editBlock(blockBar.b.id)
+                }
+                IconButton {
+                    id: files
+                    readonly property bool hovered: containsMouse
+                    name: "folder"
+                    tip: Aeroport.tr("Show in Casier")
+                    onClicked: Aeroport.showInFiles(blockBar.b.cwd)
+                }
+                IconButton {
                     id: rob
                     readonly property bool hovered: containsMouse
                     name: "chat"
@@ -380,17 +625,56 @@ Window {
     Rectangle {
         id: footer
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: FiliTheme.statusHeight
+        visible: win.footerShown
+        height: win.footerShown ? FiliTheme.statusHeight : 0
         color: FiliTheme.backgroundDeep
         Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: FiliTheme.borderWidth; color: FiliTheme.border }
         Text {
             id: where
-            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: size.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
             text: win.view ? Aeroport.shortPath(win.view.cwd) : ""
             elide: Text.ElideMiddle
             font.family: FiliTheme.font
             font.pixelSize: FiliTheme.sizeSmall
             color: FiliTheme.textSecondary
+        }
+        // The latest file transaction (fili-tx: what Rob or a tool just changed), for a couple of minutes, with Undo
+        Row {
+            id: txNotice
+            property var tx: null
+            readonly property bool undone: tx !== null && tx.state === "undone"
+            readonly property bool wanted: tx !== null && tx.changes > 0 && tx.age < 120 && (tx.state === "open" || tx.state === "committed" || undone)
+            visible: wanted
+            anchors { right: size.left; rightMargin: FiliTheme.space5; verticalCenter: parent.verticalCenter }
+            spacing: FiliTheme.space3
+            function refresh() { const j = Aeroport.txState(); tx = j ? JSON.parse(j) : null }
+            Timer { interval: 2000; repeat: true; running: win.active; triggeredOnStart: true; onTriggered: txNotice.refresh() }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                readonly property string what: !txNotice.tx ? ""
+                    : txNotice.tx.label && txNotice.tx.label !== "auto" ? txNotice.tx.label
+                    : Aeroport.tr("Files changed: %1").replace("%1", txNotice.tx.changes)
+                text: txNotice.undone ? Aeroport.tr("%1 undone").replace("%1", what) : what
+                elide: Text.ElideRight
+                width: Math.min(implicitWidth, 260)
+                font.family: FiliTheme.font
+                font.pixelSize: FiliTheme.sizeSmall
+                color: FiliTheme.textSecondary
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: txNotice.undone ? Aeroport.tr("Redo") : Aeroport.tr("Undo")
+                font.family: FiliTheme.font
+                font.pixelSize: FiliTheme.sizeSmall
+                color: FiliTheme.accentColor
+                MouseArea {
+                    anchors { fill: parent; margins: -4 }
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: { Aeroport.txRun(txNotice.undone ? "redo" : "undo"); txNotice.refresh() }
+                }
+                Accessible.role: Accessible.Button
+                Accessible.name: text
+            }
         }
         Text {
             id: size
@@ -413,7 +697,7 @@ Window {
 
     WindowPanel {
         id: windowPanel
-        anchorRight: width - (toolbar.height - closeButton.height) / 2
+        anchorRight: win.headerShown ? width - (toolbar.height - closeButton.height) / 2 : width - FiliTheme.margin
         anchorTop: toolbar.height + 1
         onVisibleChanged: if (!visible) win.refocus()
     }
@@ -423,20 +707,19 @@ Window {
         onVisibleChanged: if (!visible) win.refocus()
     }
 
-    // Keys of the menu (appmenu/fili-term.json shows the same); Ctrl+Shift so that Ctrl+letter stays the shell's
-    Shortcut { sequence: "Ctrl+Shift+T"; onActivated: win.run("new-tab") }
-    Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.run("new-window") }
-    Shortcut { sequence: "Ctrl+Shift+W"; onActivated: win.run("close-tab") }
-    Shortcut { sequence: "Ctrl+Shift+Q"; onActivated: win.run("close-window") }
-    Shortcut { sequences: ["Ctrl+Shift+C", "Ctrl+Ins", "Copy"]; onActivated: win.run("copy") }
-    Shortcut { sequences: ["Ctrl+Shift+V", "Shift+Ins", "Paste"]; onActivated: win.run("paste") }
-    Shortcut { sequences: ["Ctrl+PgDown", "Ctrl+Tab"]; onActivated: win.run("next-tab") }
-    Shortcut { sequences: ["Ctrl+PgUp", "Ctrl+Shift+Tab"]; onActivated: win.run("previous-tab") }
-    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: win.run("zoom-in") }
-    Shortcut { sequence: "Ctrl+-"; onActivated: win.run("zoom-out") }
-    Shortcut { sequence: "Ctrl+0"; onActivated: win.run("zoom-reset") }
-    Shortcut { sequence: "Ctrl+Shift+Up"; onActivated: win.run("previous-command") }
-    Shortcut { sequence: "Ctrl+Shift+Down"; onActivated: win.run("next-command") }
-    Shortcut { sequence: "Ctrl+Shift+O"; onActivated: win.run("copy-last-output") }
-    // Shift+PgUp / Shift+PgDown (history) are handled by the TerminalView itself
+    // Keys of the menu (appmenu/fili-term.json shows those of the default preset); Ctrl+Shift so that Ctrl+letter stays the shell's
+    // The keys come from the preset and the [keys] section of fili-term.toml (Settings > Aéroport), reread live
+    property var keymap: JSON.parse(Aeroport.keysJson())
+    Connections {
+        target: Aeroport
+        function onWindowChanged() { win.keymap = JSON.parse(Aeroport.keysJson()) }
+    }
+    Instantiator {
+        model: win.keymap
+        delegate: Shortcut {
+            required property var modelData
+            sequences: modelData.keys
+            onActivated: win.run(modelData.action)
+        }
+    }
 }

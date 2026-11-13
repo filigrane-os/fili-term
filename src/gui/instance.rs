@@ -4,10 +4,14 @@
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixListener;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QStringList};
+
+/// A window with its own app-id (`--app-id`): this process does not listen for other requests
+pub static STANDALONE: AtomicBool = AtomicBool::new(false);
 
 /// Request of the command line that started this process, opened once Main.qml is ready
 pub static FIRST_REQUEST: Mutex<Option<String>> = Mutex::new(None);
@@ -30,7 +34,7 @@ pub mod qobject {
         /// Open a window on a session (attach > 0) or on a new one (cwd, command)
         #[qsignal]
         #[cxx_name = "openRequested"]
-        fn open_requested(self: Pin<&mut Instance>, attach: i32, cwd: QString, command: QStringList);
+        fn open_requested(self: Pin<&mut Instance>, attach: i32, cwd: QString, hold: bool, tab: bool, title: QString, command: QStringList);
 
         /// Called by Main.qml once loaded: opens the first window and starts listening
         #[qinvokable]
@@ -50,7 +54,7 @@ pub struct InstanceRust {
 }
 
 impl qobject::Instance {
-    /// "open\t<attach id>\t<cwd>\t<argv…>"
+    /// "open\t<attach id>\t<cwd>\t<flags>\t<title>\t<argv…>"
     fn handle(self: Pin<&mut Self>, request: &str) {
         let mut parts = request.split('\t');
         if parts.next() != Some("open") {
@@ -58,11 +62,14 @@ impl qobject::Instance {
         }
         let attach = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
         let cwd = QString::from(parts.next().unwrap_or(""));
+        let flags = parts.next().unwrap_or("");
+        let (hold, tab) = (flags.split(',').any(|f| f == "hold"), flags.split(',').any(|f| f == "tab"));
+        let title = QString::from(parts.next().unwrap_or(""));
         let mut command = QStringList::default();
         for a in parts {
             command.append(QString::from(a));
         }
-        self.open_requested(attach, cwd, command);
+        self.open_requested(attach, cwd, hold, tab, title, command);
     }
 
     fn start(mut self: Pin<&mut Self>) {
@@ -71,8 +78,10 @@ impl qobject::Instance {
         }
         self.as_mut().rust_mut().started = true;
         let path = crate::proto::runtime_dir().join("ui.sock");
-        let _ = std::fs::remove_file(&path);
-        match UnixListener::bind(&path) {
+        if !STANDALONE.load(Ordering::Relaxed) {
+            let _ = std::fs::remove_file(&path);
+        }
+        match if STANDALONE.load(Ordering::Relaxed) { Err(std::io::Error::other("standalone")) } else { UnixListener::bind(&path) } {
             Ok(listener) => {
                 let thread = self.qt_thread();
                 std::thread::spawn(move || {
@@ -85,6 +94,7 @@ impl qobject::Instance {
                     }
                 });
             }
+            Err(_) if STANDALONE.load(Ordering::Relaxed) => {}
             Err(e) => eprintln!("fili-term: {}: {e}", path.display()),
         }
         let first = FIRST_REQUEST.lock().unwrap().take();
@@ -95,6 +105,6 @@ impl qobject::Instance {
 
     fn new_window(self: Pin<&mut Self>, cwd: &QString) {
         let cwd = if cwd.is_empty() { std::env::var("HOME").unwrap_or_default() } else { cwd.to_string() };
-        self.open_requested(0, QString::from(&cwd), QStringList::default());
+        self.open_requested(0, QString::from(&cwd), false, false, QString::default(), QStringList::default());
     }
 }

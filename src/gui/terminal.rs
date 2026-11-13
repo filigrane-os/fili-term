@@ -152,6 +152,8 @@ pub mod qobject {
         #[qproperty(QString, font_family, cxx_name = "fontFamily")]
         #[qproperty(i32, font_pixel_size, cxx_name = "fontPixelSize")]
         #[qproperty(i32, padding)]
+        /// Extra pixels of height per line (half above the text, half below), so a block's hairline does not touch text
+        #[qproperty(i32, line_spacing, cxx_name = "lineSpacing")]
         #[qproperty(QString, title)]
         #[qproperty(i32, scroll_offset, cxx_name = "scrollOffset")]
         #[qproperty(i32, history_size, cxx_name = "historySize")]
@@ -162,6 +164,10 @@ pub mod qobject {
         #[qproperty(QString, colors)]
         /// Changes with each change of the command blocks (on screen or their state): hover strip, menus
         #[qproperty(i32, blocks_revision, cxx_name = "blocksRevision")]
+        /// Search in the history: matches found, position of the current one (1-based, 0: none), search open
+        #[qproperty(i32, search_count, cxx_name = "searchCount")]
+        #[qproperty(i32, search_position, cxx_name = "searchPosition")]
+        #[qproperty(bool, search_active, cxx_name = "searchActive")]
         type TerminalView = super::TerminalViewRust;
 
         /// The shell ended (status), or the daemon went away (-1)
@@ -169,6 +175,10 @@ pub mod qobject {
         fn exited(self: Pin<&mut TerminalView>, status: i32);
         #[qsignal]
         fn bell(self: Pin<&mut TerminalView>);
+        /// A command that was running ended (one seen running, so not the old ones of a reattached session)
+        #[qsignal]
+        #[cxx_name = "commandFinished"]
+        fn command_finished(self: Pin<&mut TerminalView>, command: &QString, exit: i32, duration: i32);
 
         #[qinvokable]
         fn copy(self: Pin<&mut TerminalView>);
@@ -214,10 +224,41 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "canRerun"]
         fn can_rerun(self: &TerminalView) -> bool;
+        /// Open a block's output in the default editor ($VISUAL, $EDITOR, else nvim), in a new tab
+        #[qinvokable]
+        #[cxx_name = "editBlock"]
+        fn edit_block(self: Pin<&mut TerminalView>, id: i32);
+        /// Command line being run now ("" at a prompt), for the tab
+        #[qinvokable]
+        #[cxx_name = "runningCommand"]
+        fn running_command(self: &TerminalView) -> QString;
         /// Scroll to the command before (-1) or after (1) the one at the top of the view
         #[qinvokable]
         #[cxx_name = "jumpBlock"]
         fn jump_block(self: Pin<&mut TerminalView>, direction: i32);
+        /// Search the history for a text (smart case); an empty text ends the search
+        #[qinvokable]
+        fn search(self: Pin<&mut TerminalView>, text: &QString);
+        /// Hover with Ctrl held: underline the link under the point (item coordinates) and say whether there is one
+        #[qinvokable]
+        #[cxx_name = "linkAt"]
+        fn link_at(self: Pin<&mut TerminalView>, x: f64, y: f64, ctrl: bool) -> bool;
+        /// Files dropped on the terminal (addresses, one per line): their paths are typed at the prompt, quoted
+        #[qinvokable]
+        #[cxx_name = "dropPaths"]
+        fn drop_paths(self: Pin<&mut TerminalView>, urls: &QString);
+        /// Scroll so that this many lines of history are above the view's bottom (the scroll bar's handle)
+        #[qinvokable]
+        #[cxx_name = "scrollToOffset"]
+        fn scroll_to_offset(self: Pin<&mut TerminalView>, offset: i32);
+        /// Go to the next (1) or previous (-1) match
+        #[qinvokable]
+        #[cxx_name = "searchStep"]
+        fn search_step(self: Pin<&mut TerminalView>, direction: i32);
+        /// End the search: the highlights go away
+        #[qinvokable]
+        #[cxx_name = "searchClose"]
+        fn search_close(self: Pin<&mut TerminalView>);
     }
 
     unsafe extern "RustQt" {
@@ -450,7 +491,7 @@ pub fn human_duration(ms: u32) -> String {
     }
 }
 
-fn json_string(s: &str) -> String {
+pub(crate) fn json_string(s: &str) -> String {
     let mut o = String::with_capacity(s.len() + 2);
     o.push('"');
     for c in s.chars() {
@@ -535,6 +576,16 @@ struct Frame {
     history: i32,
     lines: Vec<(usize, Vec<Cell>, Vec<(usize, String)>)>,
     blocks: Vec<Shown>,
+    found: Vec<Found>,
+}
+
+/// A match of the search on screen: a row of the view and its columns (inclusive)
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Found {
+    row: i32,
+    from: i32,
+    to: i32,
+    current: bool,
 }
 
 /// A command block on screen (rows of the view; start may be above it, output is i32::MIN when there is none)
@@ -560,6 +611,10 @@ struct BlockInfo {
 /// What to do with a block's text when the daemon sends it
 enum TextUse {
     Clipboard,
+    /// A selection just made: primary selection and clipboard
+    Publish,
+    /// The output of a block, to edit
+    Edit(u32),
 }
 
 enum Message {
@@ -571,6 +626,7 @@ enum Message {
     Exit(i32),
     Block(u32, BlockInfo),
     Cwd(String),
+    SearchState(u32, u32, bool),
     BlockText(u32, String),
     Gone,
 }
@@ -597,6 +653,7 @@ pub struct TerminalViewRust {
     font_family: QString,
     font_pixel_size: i32,
     padding: i32,
+    line_spacing: i32,
     title: QString,
     scroll_offset: i32,
     history_size: i32,
@@ -632,7 +689,16 @@ pub struct TerminalViewRust {
     last_mouse: Pos,
     in_font: HashMap<char, bool>,
     blocks_revision: i32,
+    search_count: i32,
+    search_position: i32,
+    search_active: bool,
     shown_blocks: Vec<Shown>,
+    /// Link under the pointer while Ctrl is held: its address and the cells to underline (row, first, last column)
+    link_url: String,
+    link: Vec<(i32, i32, i32)>,
+    found: Vec<Found>,
+    /// `found` by row of the view, for painting
+    found_rows: Vec<Vec<Found>>,
     block_info: HashMap<u32, BlockInfo>,
     requests: HashMap<u32, TextUse>,
     next_request: u32,
@@ -650,6 +716,7 @@ impl Default for TerminalViewRust {
             font_family: QString::from("JetBrains Mono"),
             font_pixel_size: 12,
             padding: 10,
+            line_spacing: 0,
             title: QString::default(),
             scroll_offset: 0,
             history_size: 0,
@@ -685,6 +752,13 @@ impl Default for TerminalViewRust {
             in_font: HashMap::new(),
             blocks_revision: 0,
             shown_blocks: Vec::new(),
+            link_url: String::new(),
+            link: Vec::new(),
+            found: Vec::new(),
+            found_rows: Vec::new(),
+            search_count: 0,
+            search_position: 0,
+            search_active: false,
             block_info: HashMap::new(),
             requests: HashMap::new(),
             next_request: 1,
@@ -788,6 +862,7 @@ fn decode(kind: u8, payload: &[u8]) -> Option<Message> {
             Message::Block(id, info)
         }
         proto::CWD => Message::Cwd(r.string().ok()?),
+        proto::SEARCH_STATE => Message::SearchState(r.u32().ok()?, r.u32().ok()?, r.u8().ok()? != 0),
         proto::BLOCK_TEXT => {
             let request = r.u32().ok()?;
             Message::BlockText(request, String::from_utf8_lossy(r.rest()).into_owned())
@@ -838,7 +913,14 @@ fn decode_frame(r: &mut Reader<'_>) -> std::io::Result<Frame> {
             blocks.push(Shown { start, output, end, id: r.u32()? });
         }
     }
-    Ok(Frame { cols, rows, mode, cursor_col, cursor_line, cursor_shape, offset, history, lines, blocks })
+    let mut found = Vec::new();
+    if let Ok(n) = r.u16() {
+        for _ in 0..n {
+            let (row, from, to) = (r.u16()? as i32, r.u16()? as i32, r.u16()? as i32);
+            found.push(Found { row, from, to, current: r.u8()? != 0 });
+        }
+    }
+    Ok(Frame { cols, rows, mode, cursor_col, cursor_line, cursor_shape, offset, history, lines, blocks, found })
 }
 
 fn sgr_or_x10(mode: u32, button: i32, col: i32, line: i32, press: bool) -> Vec<u8> {
@@ -860,6 +942,135 @@ fn clipboard_text(mode: ClipboardMode) -> String {
 }
 
 /// A finished selection goes to the primary selection and to the clipboard (copy on select)
+/// The address around character `i` of a logical line (characters with their row and column): `http(s)://`, `ftp://`,
+/// `file://` or `www.` up to the next space or quote, without the punctuation that ends a sentence. Also the cells to
+/// underline, one span (row, first column, last column) per row.
+fn url_in(chars: &[(char, i32, i32)], i: usize) -> Option<(String, Vec<(i32, i32, i32)>)> {
+    let ends = |c: char| c <= ' ' || "\"'`<>|{}^\\".contains(c);
+    if ends(chars[i].0) {
+        return None;
+    }
+    let mut a = i;
+    while a > 0 && !ends(chars[a - 1].0) {
+        a -= 1;
+    }
+    let mut b = i;
+    while b + 1 < chars.len() && !ends(chars[b + 1].0) {
+        b += 1;
+    }
+    // Brackets that open the address, punctuation that closes the sentence (a closing bracket stays when it was opened)
+    while a < b && "([".contains(chars[a].0) {
+        a += 1;
+    }
+    while b > a {
+        let t: String = chars[a..=b].iter().map(|c| c.0).collect();
+        let count = |c: char| t.matches(c).count();
+        let last = chars[b].0;
+        let trim = ".,;:!?".contains(last) || (last == ')' && count(')') > count('(')) || (last == ']' && count(']') > count('['));
+        if !trim {
+            break;
+        }
+        b -= 1;
+    }
+    let url: String = chars[a..=b].iter().map(|c| c.0).collect();
+    let scheme_end = url.find("://");
+    let ok = match scheme_end {
+        Some(n) => n > 0 && url.len() > n + 3 && ["http", "https", "ftp", "file"].contains(&url[..n].to_ascii_lowercase().as_str()),
+        None => url.starts_with("www.") && url[4..].contains('.') && url.len() > 8,
+    };
+    if !ok {
+        return None;
+    }
+    let mut spans: Vec<(i32, i32, i32)> = Vec::new();
+    for &(_, row, col) in &chars[a..=b] {
+        match spans.last_mut() {
+            Some(s) if s.0 == row => s.2 = col,
+            _ => spans.push((row, col, col)),
+        }
+    }
+    Some((if scheme_end.is_some() { url } else { format!("https://{url}") }, spans))
+}
+
+/// A path as one word for the shell: left alone when it has nothing special, else in single quotes
+fn shell_quote(path: &str) -> String {
+    if !path.is_empty() && path.chars().all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c)) {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    }
+}
+
+/// The paths of dropped addresses (`file://…`, percent-encoded; a plain path is kept), quoted, each followed by a space
+fn paths_to_text(urls: &str) -> String {
+    let mut out = String::new();
+    for line in urls.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let path = match line.strip_prefix("file://") {
+            Some(rest) => {
+                // file://host/path: the host is empty or localhost for a local file
+                let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+                percent_decode(rest)
+            }
+            None => line.to_string(),
+        };
+        out.push_str(&shell_quote(&path));
+        out.push(' ');
+    }
+    out
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Write a block's output to a file and open it in the default editor, in a tab of the window in use
+fn edit_text(id: u32, text: &str) {
+    let dir = proto::runtime_dir().join("edit");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let file = dir.join(format!("output-{id}.txt"));
+    if std::fs::write(&file, text).is_err() {
+        return;
+    }
+    let editor = ["VISUAL", "EDITOR"]
+        .iter()
+        .find_map(|v| std::env::var(v).ok().filter(|e| !e.trim().is_empty()))
+        .unwrap_or_else(|| "nvim".to_string());
+    let mut words: Vec<String> = editor.split_whitespace().map(str::to_string).collect();
+    words.push(file.to_string_lossy().into_owned());
+    let exe = std::env::current_exe().unwrap_or_else(|_| "fili-term".into());
+    let _ = std::process::Command::new(exe)
+        .args(["--tab", "-T", "Output", "-e"])
+        .args(words)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|mut c| std::thread::spawn(move || c.wait()));
+}
+
+/// Open an address with the user's default application, without waiting for it
+fn open_url(url: &str) {
+    let _ = std::process::Command::new("xdg-open")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 fn publish_selection(text: &str) {
     set_clipboard_text(text, ClipboardMode::Selection);
     set_clipboard_text(text, ClipboardMode::Clipboard);
@@ -960,6 +1171,9 @@ impl qobject::TerminalView {
             Message::Bell => self.bell(),
             Message::Block(id, info) => {
                 let on_screen = self.shown_blocks.iter().any(|b| b.id == id);
+                let was_running = self.block_info.get(&id).is_some_and(|b| b.state == 1);
+                let finished = (was_running && info.state == 2)
+                    .then(|| (QString::from(&info.command), info.exit.unwrap_or(0), info.duration.unwrap_or(0).min(i32::MAX as u32) as i32));
                 {
                     let mut r = self.as_mut().rust_mut();
                     r.block_info.insert(id, info);
@@ -975,7 +1189,15 @@ impl qobject::TerminalView {
                 if on_screen {
                     self.as_mut().mark_all();
                 }
-                self.bump_blocks();
+                self.as_mut().bump_blocks();
+                if let Some((command, exit, duration)) = finished {
+                    self.command_finished(&command, exit, duration);
+                }
+            }
+            Message::SearchState(count, position, active) => {
+                self.as_mut().set_search_count(count as i32);
+                self.as_mut().set_search_position(position as i32);
+                self.as_mut().set_search_active(active);
             }
             Message::Cwd(dir) => {
                 if !dir.is_empty() && self.cwd.to_string() != dir {
@@ -986,6 +1208,8 @@ impl qobject::TerminalView {
                 let action = self.as_mut().rust_mut().requests.remove(&request);
                 match action {
                     Some(TextUse::Clipboard) if !text.is_empty() => set_clipboard_text(&text, ClipboardMode::Clipboard),
+                    Some(TextUse::Publish) if !text.is_empty() => publish_selection(&text),
+                    Some(TextUse::Edit(id)) => edit_text(id, &text),
                     _ => {}
                 }
             }
@@ -1041,6 +1265,18 @@ impl qobject::TerminalView {
             self.as_mut().mark_all();
             self.as_mut().bump_blocks();
         }
+        if f.found != self.found {
+            let mut by_row = vec![Vec::new(); f.rows];
+            for m in &f.found {
+                if let Some(v) = by_row.get_mut(m.row as usize) {
+                    v.push(*m);
+                }
+            }
+            let mut r = self.as_mut().rust_mut();
+            r.found = f.found;
+            r.found_rows = by_row;
+            self.as_mut().mark_all();
+        }
         let cols = self.cols;
         let mut dirty = Vec::with_capacity(f.lines.len());
         {
@@ -1087,7 +1323,9 @@ impl qobject::TerminalView {
             (fm.horizontal_advance(&QString::from("M"), -1), fm.height(), fm.ascent())
         };
         let cw = advance.round().max(1.0) as i32;
-        let ch = height.ceil().max(1.0) as i32;
+        let spacing = self.line_spacing.clamp(0, 24);
+        let ch = height.ceil().max(1.0) as i32 + spacing;
+        let height = height + spacing as f64;
         font.set_letter_spacing(QFontSpacingType::AbsoluteSpacing, cw as f64 - advance);
         let mut bold = font.clone();
         bold.set_bold(true);
@@ -1156,10 +1394,21 @@ impl qobject::TerminalView {
         ok
     }
 
-    fn in_selection(&self, col: i32, line: i32) -> bool {
+    /// Line of the selection (counted from the top of the history, so it stays on its text while the view scrolls) of a
+    /// row of the view, and back
+    fn abs_line(&self, row: i32) -> i32 {
+        row + self.history_size - self.scroll_offset
+    }
+
+    fn row_of(&self, abs: i32) -> i32 {
+        abs - self.history_size + self.scroll_offset
+    }
+
+    fn in_selection(&self, col: i32, row: i32) -> bool {
         if !self.has_selection {
             return false;
         }
+        let line = self.abs_line(row);
         let (a, b) = ordered(self.sel_a, self.sel_b);
         if line < a.line || line > b.line {
             return false;
@@ -1180,6 +1429,13 @@ impl qobject::TerminalView {
         }
         if self.in_selection(col as i32, line) {
             bg = self.pal.selection;
+        }
+        if let Some(m) = self.found_rows.get(line as usize).and_then(|v| v.iter().find(|m| m.from <= col as i32 && col as i32 <= m.to)) {
+            if m.current {
+                (fg, bg) = (self.pal.bg, self.pal.cursor);
+            } else {
+                bg = mix(self.pal.cursor, bg, 0.4);
+            }
         }
         if c.flags & flags::HIDDEN != 0 {
             fg = bg;
@@ -1280,12 +1536,13 @@ impl qobject::TerminalView {
         // Decorations
         for col in 0..cols {
             let c = self.cells[base + col];
-            if c.flags & (flags::ALL_UNDERLINES | flags::STRIKEOUT) == 0 {
+            let linked = self.link.iter().any(|&(r, a, b)| r == line && a <= col as i32 && col as i32 <= b);
+            if c.flags & (flags::ALL_UNDERLINES | flags::STRIKEOUT) == 0 && !linked {
                 continue;
             }
             let fg = rgb(self.cell_colors(line, col).0);
             let x = (pad + col as i32 * cw) as f64;
-            if c.flags & flags::ALL_UNDERLINES != 0 {
+            if c.flags & flags::ALL_UNDERLINES != 0 || linked {
                 p.as_mut().fill_rect(&QRectF::new(x, (y + ascent + 2) as f64, cw as f64, 1.0), &fg);
                 if c.flags & flags::DOUBLE_UNDERLINE != 0 {
                     p.as_mut().fill_rect(&QRectF::new(x, (y + ascent + 4) as f64, cw as f64, 1.0), &fg);
@@ -1348,7 +1605,13 @@ impl qobject::TerminalView {
             let Some(info) = self.block_info.get(&b.id) else { continue };
             let failed = info.state == 2 && info.exit.is_some_and(|e| e != 0);
             if line == b.start && line > 0 {
-                p.as_mut().fill_rect(&QRectF::new(0.0, y, width, 1.0), &rgb(mix(self.pal.fg, self.pal.bg, 0.16)));
+                // Dashed, so the gap between two commands reads as a separation without weighing on the text
+                let color = rgb(mix(self.pal.fg, self.pal.bg, 0.28));
+                let mut x = 0.0;
+                while x < width {
+                    p.as_mut().fill_rect(&QRectF::new(x, y, 4.0f64.min(width - x), 1.0), &color);
+                    x += 8.0;
+                }
             }
             if pad >= 6 && (info.state == 1 || failed) {
                 let color = if failed { self.pal.ansi[1] } else { self.pal.cursor };
@@ -1410,28 +1673,94 @@ impl qobject::TerminalView {
         s
     }
 
-    fn selection_text(&self) -> String {
+    /// Text of the selection when all of it is on screen
+    fn visible_selection_text(&self) -> Option<String> {
         if !self.has_selection || self.cells.is_empty() {
-            return String::new();
+            return Some(String::new());
         }
         let (a, b) = ordered(self.sel_a, self.sel_b);
+        let (first, last) = (self.row_of(a.line), self.row_of(b.line));
+        if first < 0 || last >= self.rows as i32 {
+            return None;
+        }
         let mut out = String::new();
-        for line in a.line..=b.line {
-            let from = if line == a.line { a.col } else { 0 };
-            let to = if line == b.line { b.col } else { self.cols as i32 - 1 };
+        for line in first..=last {
+            let from = if line == first { a.col } else { 0 };
+            let to = if line == last { b.col } else { self.cols as i32 - 1 };
             let t = self.line_text(line, from, to);
             // A line the program wrapped continues on the next one without a newline
             let wrapped = self.cells[line as usize * self.cols + self.cols - 1].flags & flags::WRAPLINE != 0;
-            if wrapped && line != b.line {
+            if wrapped && line != last {
                 out.push_str(&t);
             } else {
                 out.push_str(t.trim_end_matches(' '));
-                if line != b.line {
+                if line != last {
                     out.push('\n');
                 }
             }
         }
-        out
+        Some(out)
+    }
+
+    /// Copy the selection (`how`): at once when it is all on screen, else the daemon reads it from the history
+    fn take_selection(mut self: Pin<&mut Self>, how: TextUse) {
+        if !self.has_selection {
+            return;
+        }
+        if let Some(text) = self.visible_selection_text() {
+            match how {
+                TextUse::Publish => publish_selection(&text),
+                TextUse::Clipboard => set_clipboard_text(&text, ClipboardMode::Clipboard),
+                TextUse::Edit(_) => {}
+            }
+            return;
+        }
+        let (a, b) = ordered(self.sel_a, self.sel_b);
+        let history = self.history_size;
+        let request = {
+            let mut r = self.as_mut().rust_mut();
+            let request = r.next_request;
+            r.next_request = request.wrapping_add(1).max(1);
+            r.requests.insert(request, how);
+            request
+        };
+        let mut m = Vec::new();
+        proto::put_u32(&mut m, request);
+        proto::put_i32(&mut m, a.line - history);
+        proto::put_u16(&mut m, a.col as u16);
+        proto::put_i32(&mut m, b.line - history);
+        proto::put_u16(&mut m, b.col as u16);
+        self.send(proto::TEXT_LINES, &m);
+    }
+
+    /// Address under a cell: `http(s)://`, `ftp://`, `file://` or `www.` up to the next space or quote, across the rows
+    /// the program wrapped, without the punctuation that ends a sentence. Also the cells to underline.
+    fn url_at(&self, at: Pos) -> Option<(String, Vec<(i32, i32, i32)>)> {
+        if self.cells.is_empty() || at.line < 0 || at.line >= self.rows as i32 {
+            return None;
+        }
+        let cols = self.cols;
+        let wraps = |row: i32| self.cells[row as usize * cols + cols - 1].flags & flags::WRAPLINE != 0;
+        let (mut first, mut last) = (at.line, at.line);
+        while first > 0 && wraps(first - 1) {
+            first -= 1;
+        }
+        while last < self.rows as i32 - 1 && wraps(last) {
+            last += 1;
+        }
+        // The characters of the logical line, each with its cell
+        let mut chars: Vec<(char, i32, i32)> = Vec::new();
+        for row in first..=last {
+            for col in 0..cols {
+                let c = &self.cells[row as usize * cols + col];
+                if c.flags & flags::SPACERS == 0 {
+                    chars.push((if c.c == '\0' { ' ' } else { c.c }, row, col as i32));
+                }
+            }
+        }
+        // The character at the point (a wide character's second cell belongs to it)
+        let i = chars.iter().rposition(|&(_, r, c)| r == at.line && c <= at.col)?;
+        url_in(&chars, i)
     }
 
     fn cell_at(&self, pos: &QPointF) -> Pos {
@@ -1715,11 +2044,20 @@ impl qobject::TerminalView {
         let e = unsafe { &*event };
         self.as_mut().force_active_focus();
         let (pos, mods, button) = (e.position(), mods_of(e.modifiers()), e.button());
+        // Ctrl+click on an address opens it
+        if button == MouseButton::LeftButton && mods & key::CONTROL != 0 {
+            let c = self.cell_at(&pos);
+            if let Some((url, _)) = self.url_at(c) {
+                open_url(&url);
+                return;
+            }
+        }
         if self.as_mut().report_mouse(mods, &pos, button_code(button), true, false) {
             return;
         }
         if button == MouseButton::LeftButton {
             let c = self.cell_at(&pos);
+            let c = Pos { col: c.col, line: self.abs_line(c.line) };
             let had = self.has_selection;
             {
                 let mut r = self.as_mut().rust_mut();
@@ -1760,8 +2098,17 @@ impl qobject::TerminalView {
         if !self.selecting {
             return;
         }
+        // Dragging past the top or bottom edge scrolls the history, faster the further out
+        let (h, ch, pad) = (self.height(), self.ch.max(1) as f64, self.padding as f64);
+        let past = if pos.y() < pad { pad - pos.y() } else if pos.y() > h - pad { h - pad - pos.y() } else { 0.0 };
+        if past != 0.0 {
+            let mut b = vec![0u8];
+            proto::put_u32(&mut b, (past.signum() as i32 * (1 + (past.abs() / ch) as i32).min(8)) as u32);
+            self.send(proto::SCROLL, &b);
+        }
         let c = self.cell_at(&pos);
-        if c == self.sel_b {
+        let c = Pos { col: c.col, line: self.abs_line(c.line) };
+        if c == self.sel_b && past == 0.0 {
             return;
         }
         {
@@ -1779,7 +2126,7 @@ impl qobject::TerminalView {
             return;
         }
         if self.selecting && self.has_selection {
-            publish_selection(&self.selection_text());
+            self.as_mut().take_selection(TextUse::Publish);
         }
         self.as_mut().rust_mut().selecting = false;
     }
@@ -1812,12 +2159,13 @@ impl qobject::TerminalView {
         }
         {
             let mut r = self.as_mut().rust_mut();
-            r.sel_a = Pos { col: a, line: c.line };
-            r.sel_b = Pos { col: b, line: c.line };
+            let line = c.line + r.history_size - r.scroll_offset;
+            r.sel_a = Pos { col: a, line };
+            r.sel_b = Pos { col: b, line };
             r.has_selection = true;
             r.selecting = false;
         }
-        publish_selection(&self.selection_text());
+        self.as_mut().take_selection(TextUse::Publish);
         self.mark_all();
     }
 
@@ -1861,9 +2209,7 @@ impl qobject::TerminalView {
     // ------------------------------------------------------------ invokables
 
     fn copy(self: Pin<&mut Self>) {
-        if self.has_selection {
-            set_clipboard_text(&self.selection_text(), ClipboardMode::Clipboard);
-        }
+        self.take_selection(TextUse::Clipboard);
     }
 
     fn paste(self: Pin<&mut Self>) {
@@ -1971,6 +2317,30 @@ impl qobject::TerminalView {
         }
     }
 
+    fn edit_block(mut self: Pin<&mut Self>, id: i32) {
+        if id <= 0 {
+            return;
+        }
+        let request = {
+            let mut r = self.as_mut().rust_mut();
+            let request = r.next_request;
+            r.next_request = request.wrapping_add(1).max(1);
+            r.requests.insert(request, TextUse::Edit(id as u32));
+            request
+        };
+        let mut b = Vec::new();
+        proto::put_u32(&mut b, request);
+        proto::put_u32(&mut b, id as u32);
+        b.push(0);
+        self.send(proto::TEXT_OF, &b);
+    }
+
+    fn running_command(&self) -> QString {
+        let running = self.block_info.iter().filter(|(_, b)| b.state == 1).max_by_key(|(id, _)| **id);
+        let text = running.map(|(_, b)| b.command.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+        QString::from(&text)
+    }
+
     fn can_rerun(&self) -> bool {
         self.mode & mode::ALT_SCREEN == 0
             && self.block_info.keys().max().and_then(|id| self.block_info.get(id)).is_some_and(|b| b.state == 0)
@@ -1994,6 +2364,65 @@ impl qobject::TerminalView {
         self.send(proto::SCROLL, &b);
     }
 
+    fn drop_paths(mut self: Pin<&mut Self>, urls: &QString) {
+        let text = paths_to_text(&urls.to_string());
+        if !text.is_empty() {
+            let b = bracketed(&text, self.mode);
+            self.as_mut().send_input(&b);
+        }
+    }
+
+    fn link_at(mut self: Pin<&mut Self>, x: f64, y: f64, ctrl: bool) -> bool {
+        let found = if ctrl && self.mode & mode::MOUSE_MODE == 0 {
+            let c = self.cell_at(&QPointF::new(x, y));
+            self.url_at(c)
+        } else {
+            None
+        };
+        let (url, spans) = found.unwrap_or_default();
+        if spans != self.link {
+            let old: Vec<i32> = self.link.iter().map(|s| s.0).collect();
+            let new: Vec<i32> = spans.iter().map(|s| s.0).collect();
+            {
+                let mut r = self.as_mut().rust_mut();
+                r.link = spans;
+                r.link_url = url;
+            }
+            for row in old.into_iter().chain(new) {
+                self.as_mut().mark_line(row);
+            }
+        }
+        !self.link.is_empty()
+    }
+
+    fn scroll_to_offset(self: Pin<&mut Self>, offset: i32) {
+        let delta = offset.clamp(0, self.history_size) - self.scroll_offset;
+        if delta != 0 {
+            let mut b = vec![0u8];
+            proto::put_u32(&mut b, delta as u32);
+            self.send(proto::SCROLL, &b);
+        }
+    }
+
+    fn search(self: Pin<&mut Self>, text: &QString) {
+        let mut b = Vec::new();
+        if text.is_empty() {
+            b.push(3u8);
+        } else {
+            b.push(0u8);
+            b.extend_from_slice(text.to_string().as_bytes());
+        }
+        self.send(proto::SEARCH, &b);
+    }
+
+    fn search_step(self: Pin<&mut Self>, direction: i32) {
+        self.send(proto::SEARCH, &[if direction < 0 { 2u8 } else { 1 }]);
+    }
+
+    fn search_close(self: Pin<&mut Self>) {
+        self.send(proto::SEARCH, &[3u8]);
+    }
+
     fn set_shown(mut self: Pin<&mut Self>, shown: bool) {
         if shown {
             // Full-size image back, painted whole, which also acknowledges the frame the daemon waits on
@@ -2007,6 +2436,43 @@ impl qobject::TerminalView {
 
 #[cfg(test)]
 mod tests {
+    fn line(text: &str) -> Vec<(char, i32, i32)> {
+        text.chars().enumerate().map(|(i, c)| (c, 0, i as i32)).collect()
+    }
+    fn url(text: &str, at: usize) -> Option<String> {
+        super::url_in(&line(text), at).map(|u| u.0)
+    }
+
+    #[test]
+    fn dropped_files_become_quoted_paths() {
+        assert_eq!(super::paths_to_text("file:///home/a/b.txt\nfile:///home/a/my%20file%27s.png\n"), "/home/a/b.txt '/home/a/my file'\\''s.png' ");
+        assert_eq!(super::paths_to_text("/tmp/x y"), "'/tmp/x y' ");
+        assert_eq!(super::paths_to_text("\n"), "");
+    }
+
+    #[test]
+    fn addresses_in_text() {
+        let t = "see https://example.org/a_(b)?x=1, then";
+        assert_eq!(url(t, 10).as_deref(), Some("https://example.org/a_(b)?x=1"));
+        assert_eq!(url(t, 0), None);
+        assert_eq!(url(t, 3), None);
+        assert_eq!(url("(http://x.org/p).", 3).as_deref(), Some("http://x.org/p"));
+        assert_eq!(url("go to www.example.org.", 8).as_deref(), Some("https://www.example.org"));
+        assert_eq!(url("file:///tmp/a b", 3).as_deref(), Some("file:///tmp/a"));
+        assert_eq!(url("javascript://x", 3), None);
+        assert_eq!(url("https://", 2), None);
+        assert_eq!(url("\"http://q.org\"", 4).as_deref(), Some("http://q.org"));
+    }
+
+    #[test]
+    fn an_address_wrapped_over_two_rows() {
+        let mut c = line("http://exam");
+        c.extend("ple.org/x".chars().enumerate().map(|(i, ch)| (ch, 1, i as i32)));
+        let (u, spans) = super::url_in(&c, 15).unwrap();
+        assert_eq!(u, "http://example.org/x");
+        assert_eq!(spans, vec![(0, 0, 10), (1, 0, 8)]);
+    }
+
     use super::Pal;
 
     #[test]

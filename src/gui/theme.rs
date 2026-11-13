@@ -244,6 +244,19 @@ pub fn global_path() -> PathBuf {
     config_dir().join("theme.toml")
 }
 
+/// A part of the window ("header", "footer"): the `--key` / `--no-key` flag, then `[window] key` of fili-term.toml, then of
+/// theme.toml (written by `fili-theme header|footer on|off`); shown when none says otherwise
+pub fn window_layers(key: &str, global: &str, user: &str, args: &[String]) -> bool {
+    let (on, off) = (format!("--{key}"), format!("--no-{key}"));
+    let flag = args.iter().rev().find_map(|a| if *a == off { Some(false) } else if *a == on { Some(true) } else { None });
+    let get = |text: &str| match parse_sections(text).get("window").and_then(|s| s.get(key)) {
+        Some(Val::Str(v)) if v == "true" => Some(true),
+        Some(Val::Str(v)) if v == "false" => Some(false),
+        _ => None,
+    };
+    flag.or_else(|| get(user)).or_else(|| get(global)).unwrap_or(true)
+}
+
 pub fn theme_json() -> String {
     let read = |p: PathBuf| std::fs::read_to_string(p).unwrap_or_default();
     theme_json_layers(&read(global_path()), &read(path()))
@@ -252,6 +265,17 @@ pub fn theme_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_parts_flag_then_app_then_global() {
+        let none: Vec<String> = vec![];
+        assert!(window_layers("header", "", "", &none));
+        assert!(!window_layers("header", "[window]\nheader = false\n", "", &none));
+        assert!(window_layers("header", "[window]\nheader = false\n", "[window]\nheader = true\n", &none));
+        assert!(window_layers("header", "[window]\nheader = false\n", "", &["--header".to_string()]));
+        assert!(!window_layers("footer", "", "", &["--no-footer".to_string()]));
+        assert!(window_layers("footer", "[window]\nheader = false\n", "", &none));
+    }
 
     #[test]
     fn defaults_have_both_palettes() {

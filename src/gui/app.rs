@@ -18,6 +18,15 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "themeChanged"]
         fn theme_changed(self: Pin<&mut Aeroport>);
+        /// fili-term.toml or theme.toml changed on disk (header and footer follow it live)
+        #[qsignal]
+        #[cxx_name = "windowChanged"]
+        fn window_changed(self: Pin<&mut Aeroport>);
+        /// Whether a part of the window ("header", "footer") is shown: --no-header / --header flags, then `[window]` of
+        /// fili-term.toml, then of theme.toml; shown by default
+        #[qinvokable]
+        #[cxx_name = "windowPart"]
+        fn window_part(self: &Aeroport, key: &QString) -> bool;
 
         /// A command of the fili-bar menu (`fili-term ctl action NAME`), for the active window
         #[qsignal]
@@ -50,6 +59,25 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "askRob"]
         fn ask_rob(self: &Aeroport, view: &QString, block: i32, command: &QString, failed: bool);
+        /// A notification of the desktop (a long command ended while the window was not watched)
+        #[qinvokable]
+        fn notify(self: &Aeroport, title: &QString, body: &QString);
+        /// Keyboard shortcuts as JSON [{action, keys: [...]}]: preset and [keys] of fili-term.toml (gui/keys.rs)
+        #[qinvokable]
+        #[cxx_name = "keysJson"]
+        fn keys_json(self: &Aeroport) -> QString;
+        /// Latest file transaction of fili-tx as JSON {id, state, label, changes, age (s)}, "" when there is none
+        #[qinvokable]
+        #[cxx_name = "txState"]
+        fn tx_state(self: &Aeroport) -> QString;
+        /// Show a folder in Casier (the file manager)
+        #[qinvokable]
+        #[cxx_name = "showInFiles"]
+        fn show_in_files(self: &Aeroport, dir: &QString);
+        /// `fili-tx undo` or `fili-tx redo`
+        #[qinvokable]
+        #[cxx_name = "txRun"]
+        fn tx_run(self: &Aeroport, verb: &QString);
         /// 850 ms, 3,4 s, 2 min 05 s
         #[qinvokable]
         fn duration(self: &Aeroport, ms: f64) -> QString;
@@ -118,6 +146,27 @@ impl cxx_qt::Initialize for qobject::Aeroport {
         let qt = self.qt_thread();
         crate::ctl::serve(move |name| {
             let _ = qt.queue(move |f| f.command(&QString::from(&name)));
+        });
+        // Follow the config directory: `fili-theme header off` rewrites theme.toml
+        let qt = self.qt_thread();
+        std::thread::spawn(move || {
+            let dir = super::theme::global_path().parent().map(PathBuf::from).unwrap_or_default();
+            let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_encoded_bytes()) else { return };
+            // SAFETY: plain inotify calls on a descriptor owned by this thread
+            let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
+            if fd < 0 || unsafe { libc::inotify_add_watch(fd, c.as_ptr(), libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO) } < 0 {
+                return;
+            }
+            let mut buf = [0u8; 4096];
+            loop {
+                // SAFETY: reads into a buffer of the stated length
+                if unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) } <= 0 {
+                    return;
+                }
+                if qt.queue(|mut f| f.as_mut().window_changed()).is_err() {
+                    return;
+                }
+            }
         });
         // Follow fili-theme's state directory (inotify, thread asleep on read while nothing changes)
         let qt = self.qt_thread();
@@ -196,6 +245,81 @@ impl qobject::Aeroport {
         let question = question.replace("%1", &command).replace("%2", &block.to_string());
         let _ = std::process::Command::new("fili-chat")
             .args(["ask", &question])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|mut c| std::thread::spawn(move || c.wait()));
+    }
+
+    fn window_part(&self, key: &QString) -> bool {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let read = |p: PathBuf| std::fs::read_to_string(p).unwrap_or_default();
+        super::theme::window_layers(&key.to_string(), &read(super::theme::global_path()), &read(super::theme::path()), &args)
+    }
+
+    fn keys_json(&self) -> QString {
+        QString::from(&super::keys::json())
+    }
+
+    fn tx_state(&self) -> QString {
+        let root = state_dir().join("tx");
+        let newest = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .max_by_key(|e| e.file_name());
+        let Some(dir) = newest else { return QString::default() };
+        let path = dir.path();
+        let read = |f: &str| std::fs::read_to_string(path.join(f)).unwrap_or_default();
+        let journal = path.join("journal");
+        let changes = read("journal").lines().filter(|l| !l.is_empty()).count();
+        let age = std::fs::metadata(&journal)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map_or(u64::MAX, |d| d.as_secs());
+        QString::from(&format!(
+            "{{\"id\":{},\"state\":{},\"label\":{},\"changes\":{changes},\"age\":{}}}",
+            super::terminal::json_string(&dir.file_name().to_string_lossy()),
+            super::terminal::json_string(read("state").trim()),
+            super::terminal::json_string(read("label").trim()),
+            age.min(i32::MAX as u64)
+        ))
+    }
+
+    fn show_in_files(&self, dir: &QString) {
+        let dir = dir.to_string();
+        let dir = if dir.is_empty() { home() } else { dir };
+        let _ = std::process::Command::new("fili-file")
+            .arg(dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|mut c| std::thread::spawn(move || c.wait()));
+    }
+
+    fn tx_run(&self, verb: &QString) {
+        let verb = verb.to_string();
+        if verb != "undo" && verb != "redo" {
+            return;
+        }
+        let _ = std::process::Command::new("fili-tx")
+            .arg(verb)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|mut c| std::thread::spawn(move || c.wait()));
+    }
+
+    fn notify(&self, title: &QString, body: &QString) {
+        let _ = std::process::Command::new("notify-send")
+            .args(["--app-name=Aéroport", "--icon=fili-term", "--"])
+            .arg(title.to_string())
+            .arg(body.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

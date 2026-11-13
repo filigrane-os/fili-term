@@ -35,6 +35,14 @@ pub const SEND: u8 = 31;
 /// the last command). Answered by `TEXT`, or `ERROR`.
 pub const QUERY: u8 = 32;
 
+/// Search in the history: u8 op (0 new search, 1 next match, 2 previous match, 3 close), then for op 0 the UTF-8 text.
+/// The matches on screen come in each `FRAME`, the count in `SEARCH_STATE`.
+pub const SEARCH: u8 = 33;
+/// Text between two cells of the history (a selection reaching past the screen): u32 request, i32 start line, u16 start
+/// column, i32 end line, u16 end column (lines as the grid numbers them: 0 the top of the screen, negative in the
+/// history). Answered by `BLOCK_TEXT`.
+pub const TEXT_LINES: u8 = 34;
+
 // Daemon → window
 /// u32 id of the session this connection is attached to.
 pub const SESSION: u8 = 10;
@@ -58,6 +66,8 @@ pub const CWD: u8 = 18;
 pub const BLOCK_TEXT: u8 = 19;
 /// A one-shot request failed: string reason.
 pub const ERROR: u8 = 20;
+/// State of the search: u32 matches found, u32 position of the current one (1-based, 0: none), u8 active.
+pub const SEARCH_STATE: u8 = 21;
 
 pub fn read_msg(r: &mut impl Read) -> io::Result<(u8, Vec<u8>)> {
     let mut len = [0u8; 4];

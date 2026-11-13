@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased (V3, part A)
+
+- `fili-term [--app-id ID] [-T TITLE] [--hold] [--tab] [-e COMMAND…]`: the options scripts need from a terminal.
+  `--app-id` opens the window in a process of its own with that Wayland app-id (compositor rules), `--hold` keeps
+  the tab open once the command ended, `--tab` opens a tab in the window being used.
+- Search in the history: Ctrl+Shift+F, Enter / Shift+Enter (or Ctrl+Shift+G / H, F3) for the next and previous
+  match, Escape closes; smart case, every match lit, the current one stronger. Menu actions find, find-next,
+  find-previous.
+- Ctrl+click opens an address (http, https, ftp, file, www.) with xdg-open; Ctrl+hover underlines it.
+- The selection follows the history: it stays on its text while scrolling, dragging past an edge scrolls, and a
+  selection reaching into the history is copied by the daemon.
+- A notification when a command that ran 10 s or more ends while its terminal is not the one being watched
+  (`notify_after` in fili-term.toml, 0 turns it off).
+- Files dropped on the terminal (from Casier) type their quoted paths at the prompt; menu action show-in-files.
+- Keyboard shortcuts you can choose and edit: `keymap = "default" | "mac" | "tmux" | "none"` (also `fili-term keymap NAME`,
+  Settings > Aéroport) and a `[keys]` section of fili-term.toml, action by action (`new-tab = "Ctrl+Shift+T | Meta+T"`,
+  chords like "Ctrl+B, C", empty = none); open windows follow the file at once. New actions: tab-1 to tab-9 (Alt+1…9),
+  Ctrl+Shift+Left/Right for the previous and next tab, scroll-top and scroll-bottom keys.
+- Hover strip of a block: Edit Output (opens it in $VISUAL / $EDITOR in a new tab) and Show in Casier (the block's folder).
+- Header and footer follow `fili-theme header|footer` live; search field in the header like Casier, with a clear
+  button and previous / next buttons; history scroll bar; dashed line between blocks; `line_spacing` (default 0);
+  tabs show the running command with a spinner, and a check or cross for a result not yet seen.
+- The footer shows the latest fili-tx transaction for two minutes, with Undo (Redo once undone).
+
 ## v2.0.0 (2026-11-12)
 
 - Command blocks: shell integration loaded by the daemon (zsh, bash), OSC 133 marks kept in the grid; hairline,

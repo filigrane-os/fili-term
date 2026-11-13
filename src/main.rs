@@ -12,12 +12,16 @@ use std::os::unix::net::UnixStream;
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: fili-term [-e COMMAND [ARGS…]] [--attach ID]\n       fili-term list\n       \
+        "usage: fili-term [--app-id ID] [-T TITLE] [--hold] [--tab] [--no-header] [--no-footer] [-e COMMAND [ARGS…]] [--attach ID]\n       fili-term list\n       \
          fili-term blocks [--session ID]                 commands of a session (JSON)\n       \
          fili-term output [--session ID] [--all] [BLOCK] output of a command (default: the last one)\n       \
          fili-term send [--session ID] TEXT              types TEXT at the prompt, without Enter\n       \
+         fili-term keymap [default|mac|tmux|none]         show or choose the keyboard shortcuts\n       \
          fili-term ctl [--pid PID] action NAME | actions\n\n\
          Opens a terminal window (Aéroport); sessions live in the daemon and survive their window.\n\
+         --app-id ID: the window gets that Wayland app-id (for compositor rules), in a process of its own.\n\
+         --tab: open a tab in the window that has the focus (a new window when none is open).\n\
+         --hold: keep the tab open after the command exits, to read its output.\n\
          The session defaults to $FILI_TERM_SESSION (set in each Aéroport shell)."
     );
     2
@@ -31,6 +35,7 @@ fn main() {
             2
         }
         Some("list") => list(),
+        Some("keymap") => keymap(&args[1..]),
         // Command an open window (menu of the fili-bar); never starts Qt
         Some("ctl") => match ctl::run(&args[1..]) {
             Ok(answer) => {
@@ -58,6 +63,38 @@ fn main() {
         _ => open(&args),
     };
     std::process::exit(code);
+}
+
+/// `fili-term keymap [NAME]`: the preset of keyboard shortcuts (written as `keymap = "NAME"` in fili-term.toml)
+fn keymap(args: &[String]) -> i32 {
+    let path = gui::theme::path();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    match args.first().map(String::as_str) {
+        None => {
+            println!("{}", gui::keys::current(&text));
+            0
+        }
+        Some("list") => {
+            println!("{}", gui::keys::PRESETS.join("\n"));
+            0
+        }
+        Some(name) if gui::keys::PRESETS.contains(&name) => {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            match std::fs::write(&path, gui::keys::with_keymap(&text, name)) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("fili-term keymap: {}: {e}", path.display());
+                    1
+                }
+            }
+        }
+        Some(other) => {
+            eprintln!("fili-term keymap: unknown preset {other} (default, mac, tmux, none)");
+            2
+        }
+    }
 }
 
 fn list() -> i32 {
@@ -124,6 +161,10 @@ fn session_command(verb: &str, args: &[String]) -> Result<String, String> {
 fn open(args: &[String]) -> i32 {
     let mut command: Vec<String> = Vec::new();
     let mut attach = 0u32;
+    let mut app_id: Option<String> = None;
+    let mut title = String::new();
+    let mut hold = false;
+    let mut tab = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -131,6 +172,14 @@ fn open(args: &[String]) -> i32 {
                 command = it.by_ref().cloned().collect();
             }
             "--attach" => attach = it.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+            "--hold" => hold = true,
+            "--header" | "--no-header" | "--footer" | "--no-footer" => {}
+            "--tab" => tab = true,
+            "-T" | "--title" => title = it.next().cloned().unwrap_or_default(),
+            "--app-id" => app_id = it.next().cloned(),
+            // foot's spelling, so a script can switch terminal by changing the program name only
+            a if a.starts_with("--app-id=") => app_id = Some(a["--app-id=".len()..].to_string()),
+            a if a.starts_with("--title=") => title = a["--title=".len()..].to_string(),
             _ => return usage(),
         }
     }
@@ -139,19 +188,23 @@ fn open(args: &[String]) -> i32 {
         return 1;
     }
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-    // Request line for the window process: "open\t<attach>\t<cwd>\t<argv…>" (tabs never appear in a cwd we accept)
-    let mut request = format!("open\t{attach}\t{cwd}");
+    // Request line for the window process: "open\t<attach>\t<cwd>\t<flags>\t<title>\t<argv…>" (tabs never appear in a cwd we accept)
+    let clean = |t: &str| t.replace(['\t', '\n'], " ");
+    let mut request = format!("open\t{attach}\t{cwd}\t{}\t{}", [hold.then_some("hold"), tab.then_some("tab")].into_iter().flatten().collect::<Vec<_>>().join(","), clean(&title));
     for a in &command {
         request.push('\t');
-        request.push_str(&a.replace('\t', " "));
+        request.push_str(&clean(a));
     }
-    // A window process already running opens the window itself
-    if let Ok(mut s) = UnixStream::connect(proto::runtime_dir().join("ui.sock")) {
-        if s.write_all(format!("{request}\n").as_bytes()).is_ok() {
-            return 0;
+    // A window process already running opens the window itself; a window with its own app-id needs a process of its own
+    // (Qt sets one app-id per process)
+    if app_id.is_none() {
+        if let Ok(mut s) = UnixStream::connect(proto::runtime_dir().join("ui.sock")) {
+            if s.write_all(format!("{request}\n").as_bytes()).is_ok() {
+                return 0;
+            }
         }
     }
-    gui::run(&request)
+    gui::run(&request, app_id.as_deref())
 }
 
 /// Make sure a daemon is listening; start one in the background otherwise. Returns false if none could be reached.

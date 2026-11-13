@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
@@ -25,6 +25,7 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
 use crate::blocks::{self, Blocks, State};
 use crate::proto::{self, Reader};
+use crate::search::{self, Search};
 use crate::pty_loop::{Msg, PtyLoop, PtySender};
 
 /// Lines of history kept per session.
@@ -57,6 +58,8 @@ struct Pending {
     exited: Option<i32>,
     bell: bool,
     clipboard: Option<String>,
+    /// The program wrote to the terminal (the history may have moved under a search)
+    output: bool,
     /// Set when the attached connection changes: its writer stops.
     generation: u64,
 }
@@ -90,7 +93,10 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         let s = &self.0;
         match event {
-            Event::Wakeup => s.notify(|p| p.dirty = true),
+            Event::Wakeup => s.notify(|p| {
+                p.dirty = true;
+                p.output = true;
+            }),
             Event::Title(t) => s.notify(|p| p.title = Some(t)),
             Event::ResetTitle => s.notify(|p| p.title = Some(String::new())),
             Event::Bell => s.notify(|p| p.bell = true),
@@ -132,6 +138,7 @@ struct Session {
     term: Arc<FairMutex<Term<Listener>>>,
     shared: Arc<Shared>,
     blocks: Arc<Mutex<Blocks>>,
+    search: Mutex<Option<Search>>,
     command: String,
     started: Instant,
 }
@@ -334,7 +341,7 @@ fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>) -> i
     let pty_loop = PtyLoop::new(term.clone(), blocks.clone(), Listener(shared.clone()), pty)?;
     let _ = shared.sender.set(pty_loop.channel());
     pty_loop.spawn();
-    let session = Arc::new(Session { id, term, shared, blocks, command, started: Instant::now() });
+    let session = Arc::new(Session { id, term, shared, blocks, search: Mutex::new(None), command, started: Instant::now() });
     daemon.sessions.lock().unwrap().insert(id, session.clone());
     Ok(session)
 }
@@ -384,6 +391,25 @@ fn read_input(
                 drop(term);
                 session.shared.notify(|p| p.dirty = true);
             }
+            proto::SEARCH => {
+                let op = r.u8()?;
+                let mut term = session.term.lock();
+                let mut search = session.search.lock().unwrap();
+                match op {
+                    0 => *search = Search::new(&term, &String::from_utf8_lossy(r.rest())),
+                    3 => *search = None,
+                    n => {
+                        if let Some(s) = search.as_mut() {
+                            s.step(if n == 2 { -1 } else { 1 });
+                        }
+                    }
+                }
+                if let Some(s) = search.as_ref() {
+                    s.reveal(&mut term);
+                }
+                drop((search, term));
+                session.shared.notify(|p| p.dirty = true);
+            }
             proto::TEXT_OF => {
                 let request = r.u32()?;
                 let id = r.u32()?;
@@ -395,6 +421,23 @@ fn read_input(
                         Some((start, output, end)) => blocks::text(&term, if part == 0 { output } else { start }, end),
                         None => String::new(),
                     }
+                };
+                let mut b = Vec::with_capacity(text.len() + 4);
+                proto::put_u32(&mut b, request);
+                b.extend_from_slice(text.as_bytes());
+                proto::write_msg(&mut *out.lock().unwrap(), proto::BLOCK_TEXT, &b)?;
+            }
+            proto::TEXT_LINES => {
+                let request = r.u32()?;
+                let (l0, c0, l1, c1) = (r.i32()?, r.u16()? as usize, r.i32()?, r.u16()? as usize);
+                let text = {
+                    let term = session.term.lock();
+                    let (top, bottom) = (term.topmost_line().0, term.bottommost_line().0);
+                    let last = term.last_column().0;
+                    let at = |l: i32, c: usize| Point::new(Line(l.clamp(top, bottom)), Column(c.min(last)));
+                    let (a, b) = (at(l0, c0), at(l1, c1));
+                    let text = term.bounds_to_string(a, b);
+                    text.trim_end_matches('\n').to_string()
                 };
                 let mut b = Vec::with_capacity(text.len() + 4);
                 proto::put_u32(&mut b, request);
@@ -435,6 +478,8 @@ fn write_frames(
     // Version of the block table the window has seen (0: all of it is sent first)
     let mut seen = 0u64;
     let mut seen_cwd = 0u64;
+    // Last search state the window was told (matches, position, active)
+    let mut told = (0u32, 0u32, false);
     loop {
         // Wait for the window to show the previous frame
         {
@@ -444,7 +489,7 @@ fn write_frames(
             }
         }
         // Then for something to send
-        let (title, exited, bell, clipboard) = {
+        let (title, exited, bell, clipboard, output) = {
             let mut p = session.shared.pending.lock().unwrap();
             loop {
                 if closed.load(Ordering::Relaxed) || p.generation != generation {
@@ -456,7 +501,7 @@ fn write_frames(
                 p = session.shared.cv.wait(p).unwrap();
             }
             p.dirty = false;
-            (p.title.take(), p.exited, std::mem::take(&mut p.bell), p.clipboard.take())
+            (p.title.take(), p.exited, std::mem::take(&mut p.bell), p.clipboard.take(), std::mem::take(&mut p.output))
         };
         // Coalesce: everything that arrives within one frame interval goes in one frame
         let since = last.elapsed();
@@ -479,7 +524,28 @@ fn write_frames(
                 proto::put_string(&mut b, &blocks.cwd);
                 write_into(&mut out, proto::CWD, &b);
             }
-            encode_frame(&mut term, &blocks, full)
+            let mut search = session.search.lock().unwrap();
+            if let Some(s) = search.as_mut() {
+                s.stale |= output;
+                if s.stale {
+                    if s.searched_at.elapsed() >= search::REFRESH {
+                        s.run(&term);
+                    } else {
+                        // Not yet: another frame once the delay has passed
+                        session.shared.notify(|p| p.dirty = true);
+                    }
+                }
+            }
+            let state = search.as_ref().map_or((0, 0, false), |s| (s.matches.len() as u32, s.position(), true));
+            if state != told {
+                told = state;
+                let mut b = Vec::new();
+                proto::put_u32(&mut b, state.0);
+                proto::put_u32(&mut b, state.1);
+                b.push(state.2 as u8);
+                write_into(&mut out, proto::SEARCH_STATE, &b);
+            }
+            encode_frame(&mut term, &blocks, search.as_ref(), full)
         };
         full = false;
         last = Instant::now();
@@ -533,8 +599,9 @@ fn color(c: Color, colors: &Colors) -> u32 {
 /// then per line `u16 line` and `cols` cells of `u32 char (bit 31: zero-width characters follow), u32 fg, u32 bg,
 /// u16 flags` (+ `u8 n, n × u32` when bit 31 is set), then the command blocks on screen: `u16 count` and per block
 /// `i32 first row, i32 first row of the output (i32::MIN: none), i32 last row, u32 id` (rows of the view, the first
-/// may be above it).
-fn encode_frame(term: &mut Term<Listener>, blocks: &Blocks, full: bool) -> Vec<u8> {
+/// may be above it), then the matches of a search on screen: `u16 count` and per match `u16 row, u16 first column,
+/// u16 last column, u8 current`.
+fn encode_frame(term: &mut Term<Listener>, blocks: &Blocks, search: Option<&Search>, full: bool) -> Vec<u8> {
     let cols = term.columns();
     let rows = term.screen_lines();
     let lines: Vec<usize> = match term.damage() {
@@ -604,6 +671,14 @@ fn encode_frame(term: &mut Term<Listener>, blocks: &Blocks, full: bool) -> Vec<u
         proto::put_i32(&mut out, v.output);
         proto::put_i32(&mut out, v.end);
         proto::put_u32(&mut out, v.id);
+    }
+    let found = search.map(|s| s.visible(term, offset as i32)).unwrap_or_default();
+    proto::put_u16(&mut out, found.len() as u16);
+    for (row, from, to, current) in found {
+        proto::put_u16(&mut out, row);
+        proto::put_u16(&mut out, from);
+        proto::put_u16(&mut out, to);
+        out.push(current as u8);
     }
     out
 }

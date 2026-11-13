@@ -2,13 +2,16 @@
 pub mod app;
 pub mod i18n;
 pub mod instance;
+pub mod keys;
 pub mod settings;
 pub mod terminal;
 pub mod theme;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 
-pub fn run(request: &str) -> i32 {
+/// `app_id`: a window process of its own with that app-id; it does not take the shared socket of the window process
+pub fn run(request: &str, app_id: Option<&str>) -> i32 {
+    instance::STANDALONE.store(app_id.is_some(), std::sync::atomic::Ordering::Relaxed);
     // Static initializers of the Qt side; named here so the linker keeps them
     cxx_qt::init_crate!(cxx_qt_lib);
     cxx_qt::init_crate!(fili_term);
@@ -21,7 +24,7 @@ pub fn run(request: &str) -> i32 {
     *instance::FIRST_REQUEST.lock().unwrap() = Some(request.to_string());
     let mut app = QGuiApplication::new();
     // Wayland app-id (niri rules, fili-term.desktop, menu of the fili-bar)
-    QGuiApplication::set_desktop_file_name(&QString::from("fili-term"));
+    QGuiApplication::set_desktop_file_name(&QString::from(app_id.unwrap_or("fili-term")));
     let mut engine = QQmlApplicationEngine::new();
     if let Some(engine) = engine.as_mut() {
         engine.load(&QUrl::from("qrc:/qt/qml/Fili/Term/qml/App.qml"));

@@ -14,8 +14,15 @@ QtObject {
     property Component windowComponent: Component { Main {} }
     property Connections requests: Connections {
         target: Instance
-        function onOpenRequested(attach, cwd, command) {
-            const w = root.windowComponent.createObject(root, { attachId: attach, cwd: cwd, command: command });
+        function onOpenRequested(attach, cwd, hold, tab, title, command) {
+            // --tab: a tab in the window being used, when there is one
+            const open = tab ? (root.windows.find(x => x.active) || root.windows[root.windows.length - 1]) : null;
+            if (open) {
+                open.addTab(attach, cwd, command);
+                open.requestActivate();
+                return;
+            }
+            const w = root.windowComponent.createObject(root, { attachId: attach, cwd: cwd, command: command, hold: hold, initialTitle: title });
             if (!w)
                 return;
             root.windows = root.windows.concat([w]);

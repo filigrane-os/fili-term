@@ -15,6 +15,8 @@ pub const ACTIONS: &[&str] = &[
     "about", "new-tab", "new-window", "close-tab", "close-window", "copy", "paste", "next-tab", "previous-tab", "zoom-in",
     "zoom-out", "zoom-reset", "page-up", "page-down", "scroll-top", "scroll-bottom", "window-actions",
     "toggle-window-buttons", "previous-command", "next-command", "copy-last-output", "copy-last-command",
+    "find", "find-next", "find-previous", "show-in-files",
+    "tab-1", "tab-2", "tab-3", "tab-4", "tab-5", "tab-6", "tab-7", "tab-8", "tab-9", "edit-output",
     "ask-rob",
 ];
 
