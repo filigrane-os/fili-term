@@ -63,6 +63,14 @@
   of herdr's config (`[[keys.command]]`): type shell in the background, pane in a temporary herdr pane, popup in a
   terminal over the tab (width and height in cells or %), each with HERDR_SOCKET_PATH, HERDR_PANE_ID and
   HERDR_WORKSPACE_ID.
+- herdr panes keep their history: the pane's recent output is brought into Aéroport's history when it attaches
+  (herdr's terminal attach sends only the screen, on the alternate screen; the daemon now keeps such a client on the
+  main screen, protocol option NEW_PRIMARY_SCREEN).
+- The name of a herdr pane (given in herdr, or its agent's) shows at its top right when the tab has several panes.
+- Move Pane To (pane menu): another tab, a new tab, and in herdr a new workspace; a herdr pane moved keeps its
+  terminal (no new attachment, history kept). Tabs can be dragged along the row to reorder them (herdr's in herdr).
+- herdr's tabs and workspaces follow herdr's order (its `number` is the order of creation, not the place).
+- The pane clicked keeps the keyboard until herdr has followed (no more bounce back to the previous one).
 - Each pane has its own scroll bar, block hover strip and drop target; search follows the active pane.
 
 - herdr tabs show all their panes, laid out as herdr has them (splits and ratios from its layout), each pane attached

@@ -7,8 +7,12 @@
 use std::io::{self, Read, Write};
 
 // Window → daemon
-/// New session: u16 cols, u16 rows, u16 cell width, u16 cell height, string cwd, u8 argc, argc × string.
+/// New session: u16 cols, u16 rows, u16 cell width, u16 cell height, string cwd, u8 argc, argc × string, then an
+/// optional u8 of options (NEW_PRIMARY_SCREEN).
 pub const NEW: u8 = 1;
+/// Option of NEW: the first switch to the alternate screen is ignored, so that a client drawing a whole screen (herdr's
+/// terminal attach) draws on the main one, above the history printed before it
+pub const NEW_PRIMARY_SCREEN: u8 = 1;
 /// Attach to a living session: u32 id, u16 cols, u16 rows, u16 cell width, u16 cell height.
 pub const ATTACH: u8 = 2;
 /// Bytes for the pty (keys, paste, mouse reports): raw payload.

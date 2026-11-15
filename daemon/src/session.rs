@@ -206,7 +206,8 @@ fn serve(daemon: &Arc<Daemon>, mut stream: UnixStream) -> io::Result<()> {
             for _ in 0..argc {
                 argv.push(r.string()?);
             }
-            spawn(daemon, size, cwd, argv)?
+            let options = r.u8().unwrap_or(0);
+            spawn(daemon, size, cwd, argv, options & proto::NEW_PRIMARY_SCREEN != 0)?
         }
         proto::ATTACH => {
             let id = r.u32()?;
@@ -325,7 +326,7 @@ fn resize(session: &Session, size: WindowSize) {
     session.shared.notify(|p| p.dirty = true);
 }
 
-fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>) -> io::Result<Arc<Session>> {
+fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>, primary_screen: bool) -> io::Result<Arc<Session>> {
     let id = daemon.next_id.fetch_add(1, Ordering::Relaxed);
     let command = if argv.is_empty() { std::env::var("SHELL").unwrap_or_else(|_| "sh".into()) } else { argv.join(" ") };
     let mut env = HashMap::new();
@@ -353,7 +354,7 @@ fn spawn(daemon: &Daemon, size: WindowSize, cwd: String, argv: Vec<String>) -> i
     let term = Term::new(config, &Size { cols: size.num_cols as usize, rows: size.num_lines as usize }, Listener(shared.clone()));
     let term = Arc::new(FairMutex::new(term));
     let blocks = Arc::new(Mutex::new(Blocks::default()));
-    let pty_loop = PtyLoop::new(term.clone(), blocks.clone(), Listener(shared.clone()), pty)?;
+    let pty_loop = PtyLoop::new(term.clone(), blocks.clone(), Listener(shared.clone()), pty, primary_screen)?;
     let _ = shared.sender.set(pty_loop.channel());
     pty_loop.spawn();
     let session = Arc::new(Session {

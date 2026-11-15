@@ -62,7 +62,7 @@ pub mod qobject {
         fn right_click_pass(self: &ModeClient) -> i32;
         #[qinvokable]
         #[cxx_name = "attachCommand"]
-        fn attach_command(self: &ModeClient, terminal: &QString) -> QStringList;
+        fn attach_command(self: &ModeClient, terminal: &QString, pane: &QString) -> QStringList;
     }
 
     impl cxx_qt::Threading for ModeClient {}
@@ -207,21 +207,32 @@ impl qobject::ModeClient {
         QString::from(&herdr::config_path().to_string_lossy().into_owned())
     }
 
-    fn attach_command(&self, terminal: &QString) -> QStringList {
+    /// `herdr terminal attach` gives the screen only: the pane's recent output is printed first, so that its older
+    /// lines land in the history of the terminal, then the attachment draws the screen over the last ones
+    fn attach_command(&self, terminal: &QString, pane: &QString) -> QStringList {
+        let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+        let program = q(&self.program);
+        let script = format!(
+            "rows=$(stty size 2>/dev/null | cut -d' ' -f1); {program} pane read {} --source recent --lines {HISTORY_LINES} --ansi 2>/dev/null | head -n -\"${{rows:-0}}\"; exec {program} terminal attach {}",
+            q(&pane.to_string()),
+            q(&terminal.to_string())
+        );
         let mut l = QStringList::default();
         for a in [
             "env".to_string(),
             format!("HERDR_SOCKET_PATH={}", self.socket.display()),
-            self.program.clone(),
-            "terminal".into(),
-            "attach".into(),
-            terminal.to_string(),
+            "sh".into(),
+            "-c".into(),
+            script,
         ] {
             l.append(QString::from(&a));
         }
         l
     }
 }
+
+/// Lines of a herdr pane's history brought into Aéroport when it attaches (herdr keeps its own limit too)
+const HISTORY_LINES: u32 = 10_000;
 
 /// `herdr server` in the background, detached from the window (it outlives it, like when herdr starts it itself)
 fn start_server(program: &str, socket: &std::path::Path) {

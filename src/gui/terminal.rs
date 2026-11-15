@@ -174,6 +174,8 @@ pub mod qobject {
         /// unless the modifiers of passMods are held (herdr's right_click_passthrough_modifier; 0: never)
         #[qproperty(bool, menu_first, cxx_name = "menuFirst")]
         #[qproperty(i32, pass_mods, cxx_name = "passMods")]
+        /// The program draws a whole screen on the main one (proto::NEW_PRIMARY_SCREEN): herdr's terminal attach
+        #[qproperty(bool, primary_screen, cxx_name = "primaryScreen")]
         type TerminalView = super::TerminalViewRust;
 
         /// The shell ended (status), or the daemon went away (-1)
@@ -664,6 +666,7 @@ pub struct Fonts {
 pub struct TerminalViewRust {
     menu_first: bool,
     pass_mods: i32,
+    primary_screen: bool,
     /// The right press opened the menu: its release is not the program's
     menu_press: bool,
     session_id: i32,
@@ -734,6 +737,7 @@ impl Default for TerminalViewRust {
         Self {
             menu_first: false,
             pass_mods: 0,
+            primary_screen: false,
             menu_press: false,
             session_id: 0,
             cwd: QString::default(),
@@ -1170,6 +1174,7 @@ impl qobject::TerminalView {
             for a in &argv {
                 proto::put_string(&mut b, a);
             }
+            b.push(if self.primary_screen { proto::NEW_PRIMARY_SCREEN } else { 0 });
             let _ = proto::write_msg(&mut &stream, proto::NEW, &b);
         }
         let Ok(reader) = stream.try_clone() else { return };

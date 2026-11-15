@@ -30,6 +30,9 @@ Item {
     property bool dragging: false
     // The user gave the keyboard to another pane (click, keys): herdr's focus follows in a tab of herdr
     signal userFocused(var view)
+    // The pane the user chose last and when: a state of herdr older than that choice does not take the keyboard back
+    property var chosen: null
+    property real chosenAt: 0
 
     // Thickness of a divider line, and the smallest pane (pixels) a drag or a resize leaves
     readonly property int line: FiliTheme.borderWidth
@@ -67,6 +70,8 @@ Item {
         if (v === active || leaves.indexOf(v) < 0)
             return;
         active = v;
+        chosen = v;
+        chosenAt = Date.now();
         layout();
         userFocused(v);
     }
@@ -86,39 +91,58 @@ Item {
 
     // Split the active pane: the new terminal goes right of it or below it and takes the keyboard
     function split(dir, props) {
-        const f = active ? find(active) : null;
-        if (!f)
-            return null;
-        const v = newView(props);
-        const n = f.node;
-        const old = { view: n.view };
-        delete n.view;
-        n.dir = dir;
-        n.ratio = 0.5;
-        n.a = old;
-        n.b = { view: v };
+        return active ? insert(newView(props), dir) : null;
+    }
+    // Put a terminal beside the active pane (a new one, or one moved from another tab), with the keyboard
+    function insert(v, dir) {
+        if (v.parent !== tab) {
+            v.parent = tab;
+            v.paneTab = tab;
+        }
+        if (!root) {
+            root = { view: v };
+        } else {
+            const f = active ? find(active) : null;
+            const n = f ? f.node : root;
+            const old = Object.assign({}, n);
+            for (const k of ["view", "dir", "ratio", "a", "b", "path"])
+                delete n[k];
+            n.dir = dir;
+            n.ratio = 0.5;
+            n.a = old;
+            n.b = { view: v };
+        }
         zoomed = null;
         active = v;
         layout();
-        v.forceActiveFocus();
+        if (shown)
+            v.forceActiveFocus();
         return v;
     }
-    // Take a terminal out of the tree (its sibling takes the place of the split); false when it is the last one
-    function remove(v) {
+    // Take a terminal out of the tree, alive (its sibling takes the place of the split); false when it is the last one
+    function take(v) {
         const f = find(v);
         if (!f || !f.parent)
             return false;
         const p = f.parent;
         const other = p.a === f.node ? p.b : p.a;
-        for (const k of ["view", "dir", "ratio", "a", "b"])
+        for (const k of ["view", "dir", "ratio", "a", "b", "path"])
             delete p[k];
         Object.assign(p, other);
         if (zoomed === v)
             zoomed = null;
+        if (chosen === v)
+            chosen = null;
         if (active === v)
-            active = neighbour(v, "", p) || firstLeaf(p);
-        v.destroy();
+            active = firstLeaf(p);
         layout();
+        return true;
+    }
+    // The same, and the terminal ends
+    function remove(v) {
+        if (!take(v))
+            return false;
+        v.destroy();
         return true;
     }
 
@@ -166,13 +190,12 @@ Item {
             leaves[(i + delta + leaves.length) % leaves.length].forceActiveFocus();
     }
 
-    // The panes of a tab of herdr from herdr's layout: a tree of {dir, ratio, path, a, b} and panes {id, terminal, cwd};
-    // the terminals already attached stay, the new panes get one (props(pane) gives its properties), the gone ones end.
-    // focusedPane takes the keyboard, zoomedTab shows it alone.
-    function syncTree(tree, focusedPane, zoomedTab, props) {
-        const old = {};
-        for (const v of leaves)
-            old[v.modeTerminal] = v;
+    // The panes of a tab of herdr from herdr's layout: a tree of {dir, ratio, path, a, b} and panes {id, terminal, cwd}.
+    // `pool` holds the terminals already attached in the window's herdr tabs, by terminal id: a pane takes its own (even
+    // from another tab, when it moved: its history goes with it), a new pane gets one (props(pane) gives its
+    // properties). What stays in the pool is the caller's to end. focusedPane takes the keyboard, zoomedTab shows it alone.
+    function syncTree(tree, focusedPane, zoomedTab, props, pool) {
+        const old = pool;
         const ratios = {};
         const keep = n => {
             if (n && !n.view) {
@@ -197,8 +220,15 @@ Item {
             if (!n.terminal)
                 return null;
             let v = old[n.terminal];
-            if (!v)
+            if (v) {
+                delete old[n.terminal];
+                if (v.paneTab !== tab) {
+                    v.parent = tab;
+                    v.paneTab = tab;
+                }
+            } else {
                 v = newView(Object.assign(props(n), { modeTerminal: n.terminal }));
+            }
             v.modePane = n.id;
             used.push(v);
             return { view: v };
@@ -207,14 +237,12 @@ Item {
         if (!next)
             return false;
         const hadFocus = active !== null && active.activeFocus;
-        for (const k of Object.keys(old)) {
-            if (used.indexOf(old[k]) < 0) {
-                old[k].closeSession();
-                old[k].destroy();
-            }
-        }
         root = next;
-        active = used.find(v => v.modePane === focusedPane) || used[0];
+        // herdr confirmed the choice: its own focus moves are followed again
+        if (chosen !== null && chosen.modePane === focusedPane)
+            chosen = null;
+        const recent = chosen !== null && used.indexOf(chosen) >= 0 && Date.now() - chosenAt < 1500;
+        active = recent ? chosen : used.find(v => v.modePane === focusedPane) || used[0];
         zoomed = zoomedTab && used.length > 1 ? active : null;
         layout();
         if (hadFocus)

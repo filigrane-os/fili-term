@@ -135,6 +135,12 @@ Window {
         const id = t && t.active ? t.active.modePane : "";
         return info ? info.panes.find(p => p.id === id) || null : null;
     }
+    // herdr's pane of a terminal ({id, label, named, status…}), null outside herdr's tabs
+    function herdrPaneOf(v) {
+        const t = v ? v.paneTab : null;
+        const info = t && t.modeTab !== "" && modeState ? modeState.tabs.find(x => x.id === t.modeTab) : null;
+        return info ? info.panes.find(p => p.id === v.modePane) || null : null;
+    }
     // A pane took the keyboard in a tab of herdr: herdr's focus follows (its agents, its keys act there)
     function paneFocused(v) {
         const t = v ? v.paneTab : null;
@@ -210,6 +216,7 @@ Window {
                 { id: "pane:split-down", label: Aeroport.tr("Split Down"), hint: keyHint("split-down") },
                 { separator: true },
                 { id: "pane:swap", label: Aeroport.tr("Swap Pane"), enabled: several, children: swaps.filter(x => x.enabled) },
+                { id: "pane:move", label: Aeroport.tr("Move Pane To"), enabled: moveTargets(t).length > 0, children: moveTargets(t) },
                 { id: "pane:zoom", label: t.zoomed ? Aeroport.tr("Show All Panes") : Aeroport.tr("Zoom Pane"), hint: keyHint("zoom-pane"), enabled: several },
                 { separator: true },
                 { id: "pane:close", label: Aeroport.tr("Close Pane"), hint: keyHint("close-pane") }
@@ -218,6 +225,75 @@ Window {
         }
         contextMenu.open(p.x, p.y, entries);
     }
+    // Where a pane can go: another tab of the same kind, a new tab (and in herdr a new workspace)
+    function moveTargets(t) {
+        if (t.modeTab !== "") {
+            return tabs.filter(x => x.modeTab !== "" && x !== t).map(x => ({ id: "pane:move-tab:" + x.modeTab, label: x.modeLabel }))
+                .concat([{ id: "pane:move-new-tab", label: Aeroport.tr("New Tab") }, { id: "pane:move-new-workspace", label: Aeroport.tr("New Workspace") }]);
+        }
+        const out = tabs.map((x, i) => ({ x: x, i: i })).filter(o => o.x.modeTab === "" && o.x !== t)
+            .map(o => ({ id: "pane:move-tab:" + o.i, label: tabTitle(o.x) }));
+        if (t.leaves.length > 1)
+            out.push({ id: "pane:move-new-tab", label: Aeroport.tr("New Tab") });
+        return out;
+    }
+    // Move the active pane: in herdr through herdr; here, the terminal itself goes (its session goes on)
+    function movePane(name) {
+        const t = tab, v = view;
+        if (!t || !v)
+            return;
+        if (t.modeTab !== "") {
+            const ws = modeSection("workspaces").find(w => w.active);
+            const dest = name.startsWith("move-tab:") ? { type: "tab", tab_id: name.slice(9), split: "right" }
+                : name === "move-new-tab" ? { type: "new_tab", workspace_id: ws ? ws.id : null }
+                : name === "move-new-workspace" ? { type: "new_workspace" } : null;
+            if (dest && v.modePane !== "")
+                modeAct({ op: "move-pane", id: v.modePane, destination: dest });
+            return;
+        }
+        let to = name.startsWith("move-tab:") ? tabs[parseInt(name.slice(9))] : null;
+        const single = t.leaves.length <= 1;
+        if ((!to && single) || to === t)
+            return;
+        if (!single)
+            t.take(v);
+        if (!to) {
+            to = newTab();
+            tabs = tabs.concat([to]);
+        }
+        to.insert(v, "right");
+        // A tab whose only pane left goes away, without hanging the pane up
+        if (single) {
+            tabs = tabs.filter(x => x !== t);
+            t.destroy();
+        }
+        select(tabs.indexOf(to));
+    }
+    // A tab dragged in the row and dropped at x (row coordinates): its new place. herdr's tabs move in herdr.
+    function dropTab(from, x) {
+        let to = 0;
+        for (let k = 0; k < tabs.length; ++k) {
+            const it = tabRepeater.itemAt(k);
+            if (k !== from && it && it.x + it.width / 2 < x)
+                ++to;
+        }
+        const t = tabs[from];
+        if (!t || to === from)
+            return;
+        if (t.modeTab !== "") {
+            const before = tabs.filter((x, i) => i !== from).slice(0, to).filter(x => x.modeTab !== "").length;
+            modeAct({ op: "move-tab", id: t.modeTab, index: before });
+            return;
+        }
+        const shown = tab;
+        const list = tabs.filter(x => x !== t);
+        list.splice(to, 0, t);
+        tabs = list;
+        const firstMode = list.findIndex(x => x.modeTab !== "");
+        if (firstMode >= 0)
+            modeAt = firstMode;
+        current = tabs.indexOf(shown);
+    }
     readonly property var swapLabels: ({ left: "With the Pane on the Left", right: "With the Pane on the Right", up: "With the Pane Above", down: "With the Pane Below" })
     function menuAction(id) {
         if (!id.startsWith("pane:")) {
@@ -225,7 +301,9 @@ Window {
             return;
         }
         const name = id.slice(5);
-        if (name.startsWith("swap-")) {
+        if (name.startsWith("move-")) {
+            movePane(name);
+        } else if (name.startsWith("swap-")) {
             swapPane(name.slice(5));
         } else if (name === "zoom") {
             run("zoom-pane");
@@ -308,6 +386,9 @@ Window {
             startMode(integrable(view), view);
     }
     function modeAct(action) {
+        // Any other action may move herdr's focus itself (a split, a new pane): followed at once
+        if (action.op !== "focus-pane" && tab)
+            tab.chosen = null;
         modeClient.act(JSON.stringify(action));
     }
     // herdr's tabs as tabs of the window: one per tab of herdr's focused workspace, attached to the pane chosen in the
@@ -321,6 +402,11 @@ Window {
         const want = st ? st.tabs : [];
         let list = tabs.slice();
         const made = [];
+        // Every terminal attached in herdr's tabs, by terminal: a pane moved to another tab keeps its own
+        const pool = {};
+        for (const t of list.filter(x => x.modeTab !== ""))
+            for (const v of t.leaves)
+                pool[v.modeTerminal] = v;
         for (const w of want) {
             // The panes of herdr's tab laid out as herdr has them, each attached to its terminal
             let t = list.find(x => x.modeTab === w.id);
@@ -329,8 +415,8 @@ Window {
                 t = newTab({ modeTab: w.id });
             const tree = w.layout || w.panes.find(p => p.focused) || w.panes[0] || null;
             // Right click as in herdr's client: its pane menu, or the program with the modifier of its config
-            const props = n => ({ cwd: n.cwd || w.cwd, command: modeClient.attachCommand(n.terminal), menuFirst: true, passMods: modeClient.rightClickPass() });
-            if (!t.syncTree(tree, w.pane, w.zoomed === true, props)) {
+            const props = n => ({ cwd: n.cwd || w.cwd, command: modeClient.attachCommand(n.terminal, n.id || ""), menuFirst: true, passMods: modeClient.rightClickPass(), primaryScreen: true });
+            if (!t.syncTree(tree, w.pane, w.zoomed === true, props, pool)) {
                 if (fresh)
                     t.destroy();
                 continue;
@@ -341,11 +427,13 @@ Window {
             t.modeStatus = w.status || "";
             made.push(t);
         }
-        // Tabs of herdr that went away (closed, another workspace, the mode stopped)
-        for (const t of list.filter(x => x.modeTab !== "" && made.indexOf(x) < 0)) {
-            t.closeAll();
-            t.destroy();
+        // Panes of herdr gone (closed, another workspace, the mode stopped), then the tabs gone
+        for (const k of Object.keys(pool)) {
+            pool[k].closeSession();
+            pool[k].destroy();
         }
+        for (const t of list.filter(x => x.modeTab !== "" && made.indexOf(x) < 0))
+            t.destroy();
         const shown = tab;
         const others = list.filter(x => x.modeTab === "");
         const at = Math.min(modeAt, others.length);
@@ -860,10 +948,16 @@ Window {
             anchors { left: parent.left; leftMargin: FiliTheme.margin; right: parent.right; rightMargin: FiliTheme.margin; verticalCenter: parent.verticalCenter }
             spacing: FiliTheme.space3
             Repeater {
+                id: tabRepeater
                 model: win.tabs.length
                 Rectangle {
                     id: tab
                     required property int index
+                    // Dragged along the row: follows the pointer, dropped in its new place
+                    property real dragDx: 0
+                    transform: Translate { x: tab.dragDx }
+                    z: dragDx !== 0 ? 10 : 0
+                    opacity: dragDx !== 0 ? 0.85 : 1
                     readonly property bool on: index === win.current
                     readonly property bool hovered: tabArea.containsMouse || closeTabArea.containsMouse
                     // Readable width (80 to 180), shared out when the row is full
@@ -903,7 +997,23 @@ Window {
                         anchors.fill: parent
                         hoverEnabled: true
                         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+                        property real pressX: 0
+                        property bool moved: false
+                        onPressed: e => { pressX = e.x; moved = false }
+                        onPositionChanged: e => {
+                            if (pressed && (e.buttons & Qt.LeftButton) && (moved || Math.abs(e.x - pressX) > 8)) {
+                                moved = true;
+                                tab.dragDx = e.x - pressX;
+                            }
+                        }
+                        onReleased: e => {
+                            if (moved)
+                                win.dropTab(tab.index, tab.x + tab.width / 2 + tab.dragDx);
+                            tab.dragDx = 0;
+                        }
                         onClicked: e => {
+                            if (moved)
+                                return;
                             const t = win.tabs[tab.index];
                             if (e.button === Qt.RightButton) {
                                 // herdr's tab menu on a tab of herdr
@@ -1112,6 +1222,36 @@ Window {
                 width: v.width
                 height: v.height
                 visible: v.visible
+                // The pane of herdr shown here (its name, its agent)
+                readonly property var info: { win.modeState; return win.herdrPaneOf(v) }
+
+                // Name of a pane of herdr (given in herdr, or its agent's) at its top right, when the tab has several:
+                // it steps aside while the pointer is over it
+                Rectangle {
+                    id: nameChip
+                    visible: pane.info !== null && pane.info.named === true && win.tab !== null && win.tab.leaves.length > 1 && !win.tab.zoomed
+                    anchors { top: parent.top; right: parent.right; topMargin: FiliTheme.space1; rightMargin: FiliTheme.space3 }
+                    z: 2
+                    width: Math.min(nameText.implicitWidth + 2 * FiliTheme.space2, parent.width / 2)
+                    height: 20
+                    radius: FiliTheme.radiusControl
+                    color: FiliTheme.alpha(FiliTheme.backgroundDeep, 0.85)
+                    border.width: FiliTheme.borderWidth
+                    border.color: pane.v === win.view ? FiliTheme.accentColor : FiliTheme.border
+                    opacity: chipHover.containsMouse ? 0.15 : 1
+                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                    Text {
+                        id: nameText
+                        anchors { fill: parent; leftMargin: FiliTheme.space2; rightMargin: FiliTheme.space2 }
+                        verticalAlignment: Text.AlignVCenter
+                        text: pane.info ? pane.info.label : ""
+                        elide: Text.ElideRight
+                        font.family: FiliTheme.font
+                        font.pixelSize: FiliTheme.sizeSmall
+                        color: pane.v === win.view ? FiliTheme.text : FiliTheme.textSecondary
+                    }
+                    MouseArea { id: chipHover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
+                }
 
                 // Scroll bar of the history: a thin handle at the right edge, shown while scrolling, on hover and when dragged
                 Item {

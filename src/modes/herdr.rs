@@ -283,6 +283,8 @@ impl Adapter {
             // The panes of a tab, as Aéroport lays them out: the keyboard, zoom, a divider moved by keys or dragged
             ("focus-pane", _) => ("pane.focus", json!({"pane_id": id})),
             ("clear", _) => ("pane.clear", json!({"pane_id": id})),
+            // To another tab of herdr (beside its focused pane), a new tab, a new workspace
+            ("move-pane", _) => ("pane.move", json!({"pane_id": id, "destination": a["destination"], "focus": true})),
             ("edit-scrollback", _) => ("pane.edit_scrollback", json!({"pane_id": id})),
             // A custom command of type "pane": a pane beside, whose shell becomes the command (it closes when it ends)
             ("run-pane", _) => {
@@ -723,9 +725,6 @@ fn text(v: &Value) -> Option<&str> {
     v.as_str().filter(|s| !s.is_empty())
 }
 
-fn by_number(items: &mut [&Value]) {
-    items.sort_by_key(|v| v["number"].as_u64().unwrap_or(u64::MAX));
-}
 
 /// Name of an agent: what herdr shows (display_agent), else the agent's program, its name, its title
 fn agent_label(a: &Value) -> String {
@@ -740,14 +739,13 @@ fn agent_label(a: &Value) -> String {
 /// (state JSON, status per agent, notices) from a `session.snapshot`
 fn state_of(snap: &Value, before: Option<&HashMap<String, String>>) -> (String, HashMap<String, String>, Vec<String>) {
     let empty = Vec::new();
-    let mut workspaces: Vec<&Value> = snap["workspaces"].as_array().unwrap_or(&empty).iter().collect();
-    by_number(&mut workspaces);
+    let workspaces: Vec<&Value> = snap["workspaces"].as_array().unwrap_or(&empty).iter().collect();
+    // In herdr's order (that of the snapshot): `number` is the order of creation, it stays when a tab or a workspace moves
     let focused_ws = snap["focused_workspace_id"].as_str().unwrap_or("");
     let ws_label: HashMap<&str, &str> =
         workspaces.iter().filter_map(|w| Some((w["workspace_id"].as_str()?, w["label"].as_str().unwrap_or("")))).collect();
 
-    let mut tabs: Vec<&Value> = snap["tabs"].as_array().unwrap_or(&empty).iter().filter(|t| t["workspace_id"] == focused_ws).collect();
-    by_number(&mut tabs);
+    let tabs: Vec<&Value> = snap["tabs"].as_array().unwrap_or(&empty).iter().filter(|t| t["workspace_id"] == focused_ws).collect();
     let active_tab = workspaces
         .iter()
         .find(|w| w["workspace_id"] == focused_ws)
@@ -787,8 +785,10 @@ fn state_of(snap: &Value, before: Option<&HashMap<String, String>>) -> (String, 
                         .or_else(|| agent_names.get(pid).cloned())
                         .or_else(|| text(&p["terminal_title_stripped"]).map(str::to_string))
                         .unwrap_or_else(|| format!("{}", i + 1));
+                    // A name given in herdr or an agent's: shown on the pane (a title or a number is not)
+                    let named = text(&p["label"]).is_some() || agent_names.contains_key(pid);
                     Some(json!({
-                        "id": pid, "terminal": p["terminal_id"], "label": label, "status": p["agent_status"],
+                        "id": pid, "terminal": p["terminal_id"], "label": label, "named": named, "status": p["agent_status"],
                         "focused": *pid == focused, "cwd": p["foreground_cwd"].as_str().or_else(|| p["cwd"].as_str()).unwrap_or(""),
                     }))
                 })
@@ -996,24 +996,26 @@ mod tests {
         let snap: Value = serde_json::from_str(SNAPSHOT).unwrap();
         let (state, statuses, notices) = state_of(&snap, None);
         let s: Value = serde_json::from_str(&state).unwrap();
-        // Tabs of the focused workspace only, by number
+        // Tabs of the focused workspace only, in herdr's order
         assert_eq!(s["tabs"].as_array().unwrap().len(), 2);
-        assert_eq!(s["tabs"][0]["id"], "w1:t1");
-        assert_eq!(s["tabs"][0]["active"], true);
-        assert_eq!(s["tabs"][1]["label"], "logs");
+        assert_eq!(s["tabs"][1]["id"], "w1:t1");
+        assert_eq!(s["tabs"][1]["active"], true);
+        assert_eq!(s["tabs"][0]["label"], "logs");
         // A tab shows its focused pane; its panes in the order of its layout
-        assert_eq!(s["tabs"][0]["terminal"], "term_c");
-        assert_eq!(s["tabs"][0]["cwd"], "/c");
-        assert_eq!(s["tabs"][0]["panes"].as_array().unwrap().len(), 2);
-        assert_eq!(s["tabs"][0]["panes"][1]["label"], "logs");
-        assert_eq!(s["tabs"][0]["panes"][1]["focused"], true);
+        assert_eq!(s["tabs"][1]["terminal"], "term_c");
+        assert_eq!(s["tabs"][1]["cwd"], "/c");
+        assert_eq!(s["tabs"][1]["panes"].as_array().unwrap().len(), 2);
+        assert_eq!(s["tabs"][1]["panes"][1]["label"], "logs");
+        assert_eq!(s["tabs"][1]["panes"][1]["named"], true);
+        assert_eq!(s["tabs"][1]["panes"][0]["named"], false);
+        assert_eq!(s["tabs"][1]["panes"][1]["focused"], true);
         // Without a layout: the panes of the tab, the first one; an agent's pane is named after it
-        assert_eq!(s["tabs"][1]["terminal"], "term_b");
-        assert_eq!(s["tabs"][1]["panes"][0]["label"], "claude");
-        // Workspaces by number, the focused one active
-        assert_eq!(s["sections"][0]["items"][0]["label"], "demo");
-        assert_eq!(s["sections"][0]["items"][0]["detail"], "2");
-        assert_eq!(s["sections"][0]["items"][0]["active"], true);
+        assert_eq!(s["tabs"][0]["terminal"], "term_b");
+        assert_eq!(s["tabs"][0]["panes"][0]["label"], "claude");
+        // Workspaces in herdr's order, the focused one active
+        assert_eq!(s["sections"][0]["items"][1]["label"], "demo");
+        assert_eq!(s["sections"][0]["items"][1]["detail"], "2");
+        assert_eq!(s["sections"][0]["items"][1]["active"], true);
         assert_eq!(s["sections"][1]["items"][0]["label"], "claude");
         assert_eq!(s["sections"][1]["items"][0]["detail"], "demo");
         assert!(notices.is_empty());

@@ -58,6 +58,8 @@ pub struct PtyLoop<U: EventListener> {
     terminal: Arc<FairMutex<Term<U>>>,
     blocks: Arc<Mutex<Blocks>>,
     events: U,
+    /// The first ESC[?1049h still to drop (NEW_PRIMARY_SCREEN)
+    drop_alt_screen: bool,
 }
 
 #[derive(Default)]
@@ -70,9 +72,11 @@ struct State {
 }
 
 impl<U: EventListener + Send + 'static> PtyLoop<U> {
-    pub fn new(terminal: Arc<FairMutex<Term<U>>>, blocks: Arc<Mutex<Blocks>>, events: U, pty: tty::Pty) -> io::Result<Self> {
+    pub fn new(
+        terminal: Arc<FairMutex<Term<U>>>, blocks: Arc<Mutex<Blocks>>, events: U, pty: tty::Pty, primary_screen: bool,
+    ) -> io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        Ok(Self { poll: Poller::new()?.into(), pty, rx, peeked: None, tx, terminal, blocks, events })
+        Ok(Self { poll: Poller::new()?.into(), pty, rx, peeked: None, tx, terminal, blocks, events, drop_alt_screen: primary_screen })
     }
 
     pub fn channel(&self) -> PtySender {
@@ -131,6 +135,9 @@ impl<U: EventListener + Send + 'static> PtyLoop<U> {
                     Some(t) => t,
                 }),
             };
+            if self.drop_alt_screen {
+                unprocessed = drop_first(&mut buf[..unprocessed], b"\x1b[?1049h", &mut self.drop_alt_screen);
+            }
             let bytes = &buf[..unprocessed];
             let marks = &mut state.marks;
             state.scanner.feed(bytes, |end, mark| marks.push((end, mark)));
@@ -262,5 +269,34 @@ impl<U: EventListener + Send + 'static> PtyLoop<U> {
                 let _ = self.pty.deregister(&self.poll);
             })
             .expect("pty thread");
+    }
+}
+
+/// Remove the first `seq` from `buf` (the bytes after it move back), clearing `pending` once done; the new length
+fn drop_first(buf: &mut [u8], seq: &[u8], pending: &mut bool) -> usize {
+    let len = buf.len();
+    match buf.windows(seq.len()).position(|w| w == seq) {
+        Some(at) => {
+            buf.copy_within(at + seq.len()..len, at);
+            *pending = false;
+            len - seq.len()
+        }
+        None => len,
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    #[test]
+    fn drops_the_first_only() {
+        let mut b = b"ab\x1b[?1049hcd\x1b[?1049h".to_vec();
+        let mut pending = true;
+        let n = super::drop_first(&mut b, b"\x1b[?1049h", &mut pending);
+        assert_eq!(&b[..n], b"abcd\x1b[?1049h");
+        assert!(!pending);
+        let mut c = b"plain".to_vec();
+        let mut pending = true;
+        assert_eq!(super::drop_first(&mut c, b"\x1b[?1049h", &mut pending), 5);
+        assert!(pending);
     }
 }
