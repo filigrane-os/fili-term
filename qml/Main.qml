@@ -33,7 +33,7 @@ Window {
     property bool showHeader: Aeroport.windowPart("header")
     property bool showFooter: Aeroport.windowPart("footer")
     readonly property bool headerShown: showHeader
-    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || asking !== null || error !== ""
+    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || asking !== null || error !== "" || resizing
     Connections {
         target: Aeroport
         function onWindowChanged() {
@@ -459,6 +459,7 @@ Window {
         else if (id === "split-right" || id === "split-down") modeAct({ op: "split", id: it.id, direction: id === "split-right" ? "right" : "down" });
         else if (id === "close-pane") modeAct({ op: "close", section: "panes", id: it.id });
         else if (id.startsWith("worktree:")) modeAct({ op: "open-worktree", id: m.item.id, path: id.slice(9) });
+        else if (id.startsWith("herdrkey:")) herdrKey(id.slice(9));
         else if (id.startsWith("space:")) modeAct({ op: "select", section: "workspaces", id: id.slice(6) });
     }
     Connections {
@@ -478,14 +479,17 @@ Window {
     property var herdrKeys: []
     Connections {
         target: modeClient
-        function onKindChanged() { win.herdrKeys = modeClient.kind === "herdr" ? JSON.parse(modeClient.keysJson()) : [] }
+        function onKindChanged() {
+            win.herdrKeys = modeClient.kind === "herdr" ? JSON.parse(modeClient.keysJson()) : [];
+            win.herdrCommands = modeClient.kind === "herdr" ? JSON.parse(modeClient.commandsJson()) : [];
+        }
     }
     Instantiator {
         model: win.herdrKeys
         delegate: Shortcut {
             required property var modelData
             sequences: modelData.keys
-            enabled: win.tab !== null && win.tab.modeTab !== "" && !contextMenu.visible && !namePrompt.visible
+            enabled: win.tab !== null && win.tab.modeTab !== "" && !contextMenu.visible && !namePrompt.visible && win.popup === null && !win.resizing
             onActivated: win.herdrKey(modelData.action)
         }
     }
@@ -513,7 +517,7 @@ Window {
         const stepIn = (list, i, d) => list.length ? list[(i + d + list.length) % list.length] : null;
         if (action === "settings") Qt.openUrlExternally("file://" + modeClient.configPath());
         else if (action === "detach") modeClient.stop();
-        else if (action === "reload_config") { modeAct({ op: "reload-config" }); herdrKeys = JSON.parse(modeClient.keysJson()) }
+        else if (action === "reload_config") { modeAct({ op: "reload-config" }); herdrKeys = JSON.parse(modeClient.keysJson()); herdrCommands = JSON.parse(modeClient.commandsJson()) }
         else if (action === "open_notification_target") showAgent(agents.find(a => a.status === "blocked") || agents.find(a => a.status === "done"));
         else if (action === "workspace_picker" || action === "goto") {
             menuTarget = { section: "picker", item: null, x: p.x, y: p.y };
@@ -547,7 +551,60 @@ Window {
         else if (action === "split_vertical") split("right");
         else if (action === "split_horizontal") split("down");
         else if (action === "close_pane") closePane(view, true);
+        else if (action.startsWith("swap_pane_")) swapPane(action.slice(10));
+        else if (action === "resize_mode") resizing = true;
+        else if (action === "edit_scrollback") { if (pane) modeAct({ op: "edit-scrollback", id: pane.id }) }
+        else if (action === "clear_pane") { if (pane) modeAct({ op: "clear", id: pane.id }) }
+        else if (action === "help") herdrHelp(p);
+        else if (action === "command") runCommand(herdrCommands[n], pane, space);
         else if (action === "toggle_sidebar") toggleSidebar();
+    }
+    // herdr's custom commands ([[keys.command]] of its config): shell in the background, pane beside (in herdr), popup over
+    // the tab (here)
+    property var herdrCommands: []
+    function runCommand(c, pane, space) {
+        if (!c)
+            return;
+        const cwd = view ? view.cwd : "";
+        const paneId = pane ? pane.id : "", ws = space ? space.id : "";
+        const type = c.type || "popup";
+        if (type === "shell")
+            modeClient.runShell(c.command, cwd, paneId, ws);
+        else if (type === "pane") {
+            if (pane) modeAct({ op: "run-pane", id: pane.id, command: c.command });
+        } else
+            popup = { command: modeClient.commandLine(c.command, paneId, ws), cwd: cwd, width: c.width || "80%", height: c.height || "80%" };
+    }
+    // A popup of herdr: a terminal over the tab until its command ends
+    property var popup: null
+    function closePopup() {
+        popup = null;
+        refocus();
+    }
+    // Resize mode of herdr (prefix+r): arrows or h j k l move the active pane's dividers until Esc or Enter
+    property bool resizing: false
+    onCurrentChanged: resizing = false
+    // Help of herdr (prefix+?): its bindings, by family, each runnable from the menu
+    function herdrHelp(p) {
+        const groups = [["Workspaces", /workspace|worktree|goto/], ["Tabs", /tab/], ["Panes", /pane|split|zoom|resize|scrollback/], ["Agents", /agent|notification/], ["Commands", /^command:/]];
+        const label = k => {
+            if (k.action.startsWith("command:")) {
+                const c = herdrCommands[parseInt(k.action.slice(8))];
+                return c ? (c.description || c.command) : k.action;
+            }
+            const t = k.action.replace(/:(\d)$/, " $1").replace(/_/g, " ");
+            return t.charAt(0).toUpperCase() + t.slice(1);
+        };
+        const used = new Set();
+        const entries = [];
+        for (const [title, re] of groups.concat([["Other", /./]])) {
+            const items = herdrKeys.filter(k => !used.has(k.action) && re.test(k.action) && k.action !== "help");
+            items.forEach(k => used.add(k.action));
+            if (items.length)
+                entries.push({ id: "", label: Aeroport.tr(title), children: items.map(k => ({ id: "herdrkey:" + k.action, label: label(k), hint: k.keys[0] })) });
+        }
+        menuTarget = { section: "help", item: null, x: p.x, y: p.y };
+        contextMenu.open(p.x, p.y, entries);
     }
 
     // A question in the footer before a close or a delete (Cancel, then the action), as the HIG's inline confirmation
@@ -564,7 +621,13 @@ Window {
         refocus();
     }
     Shortcut { sequences: ["Return", "Enter"]; enabled: win.asking !== null; onActivated: win.answer(true) }
-    Shortcut { sequence: "Esc"; enabled: win.asking !== null || win.error !== ""; onActivated: { win.error = ""; win.answer(false) } }
+    Shortcut { sequence: "Esc"; enabled: !win.resizing && (win.asking !== null || win.error !== ""); onActivated: { win.error = ""; win.answer(false) } }
+    // Resize mode: the keys of herdr's resize mode, the footer says how to leave it
+    Shortcut { sequences: ["Left", "H"]; enabled: win.resizing; onActivated: win.paneAction("resize-left") }
+    Shortcut { sequences: ["Right", "L"]; enabled: win.resizing; onActivated: win.paneAction("resize-right") }
+    Shortcut { sequences: ["Up", "K"]; enabled: win.resizing; onActivated: win.paneAction("resize-up") }
+    Shortcut { sequences: ["Down", "J"]; enabled: win.resizing; onActivated: win.paneAction("resize-down") }
+    Shortcut { sequences: ["Esc", "Return", "Enter", "Q"]; enabled: win.resizing; onActivated: win.resizing = false }
     // An error of herdr, in the footer for a few seconds
     property string error: ""
     function showError(text) {
@@ -609,7 +672,9 @@ Window {
     }
 
     function refocus() {
-        if (view && !aboutCard.visible && !windowPanel.visible && !contextMenu.visible && !namePrompt.visible)
+        if (popupLoader.item)
+            popupLoader.item.forceActiveFocus();
+        else if (view && !aboutCard.visible && !windowPanel.visible && !contextMenu.visible && !namePrompt.visible)
             view.forceActiveFocus();
     }
 
@@ -1234,24 +1299,24 @@ Window {
         Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: FiliTheme.borderWidth; color: FiliTheme.border }
         Rectangle {
             id: question
-            visible: win.asking !== null || win.error !== ""
+            visible: win.asking !== null || win.error !== "" || win.resizing
             anchors { fill: parent; topMargin: FiliTheme.borderWidth }
             z: 5
             color: FiliTheme.backgroundDeep
             Text {
                 anchors { left: parent.left; leftMargin: FiliTheme.margin; right: answers.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
-                text: win.asking ? win.asking.text : win.error
+                text: win.asking ? win.asking.text : win.resizing ? Aeroport.tr("Resizing the pane: arrows or H J K L, Esc when done") : win.error
                 elide: Text.ElideRight
                 font.family: FiliTheme.font
                 font.pixelSize: FiliTheme.sizeSmall
-                color: win.asking ? FiliTheme.text : FiliTheme.danger
+                color: win.asking || win.resizing ? FiliTheme.text : FiliTheme.danger
             }
             Row {
                 id: answers
                 anchors { right: parent.right; rightMargin: FiliTheme.margin; verticalCenter: parent.verticalCenter }
                 spacing: FiliTheme.space4
                 Repeater {
-                    model: win.asking ? [{ label: Aeroport.tr("Cancel"), go: false }, { label: win.asking.action, go: true }] : [{ label: Aeroport.tr("OK"), go: false }]
+                    model: win.asking ? [{ label: Aeroport.tr("Cancel"), go: false }, { label: win.asking.action, go: true }] : win.resizing ? [{ label: Aeroport.tr("Done"), go: false }] : [{ label: Aeroport.tr("OK"), go: false }]
                     Text {
                         required property var modelData
                         anchors.verticalCenter: parent.verticalCenter
@@ -1268,6 +1333,7 @@ Window {
                             onClicked: {
                                 // Read before the question goes: clearing it destroys this button
                                 const a = win.asking, go = parent.modelData.go;
+                                win.resizing = false;
                                 win.asking = null;
                                 win.error = "";
                                 if (go && a)
@@ -1394,6 +1460,48 @@ Window {
                 enabled: size.back
                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                 onClicked: win.run("scroll-bottom")
+            }
+        }
+    }
+
+    // Popup of herdr over the tab: the rest dimmed and out of reach until the command ends (a cell count or a percentage)
+    Rectangle {
+        anchors.fill: stack
+        visible: win.popup !== null
+        z: 70
+        color: FiliTheme.alpha(FiliTheme.backgroundDeep, 0.55)
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: w => w.accepted = true }
+        Rectangle {
+            id: popupFrame
+            readonly property real cellW: win.view && win.view.columns > 0 ? win.view.width / win.view.columns : win.fontSize * 0.6
+            readonly property real cellH: win.view && win.view.lines > 0 ? win.view.height / win.view.lines : win.fontSize * 1.2
+            function popupSize(spec, cell, whole) {
+                const t = String(spec || "80%");
+                const v = t.endsWith("%") ? whole * parseInt(t) / 100 : parseInt(t) * cell + 2 * win.settings.padding;
+                return Math.max(120, Math.min(whole - 2 * FiliTheme.space4, isNaN(v) ? whole * 0.8 : v));
+            }
+            width: win.popup ? popupFrame.popupSize(win.popup.width, popupFrame.cellW, parent.width) : 0
+            height: win.popup ? popupFrame.popupSize(win.popup.height, popupFrame.cellH, parent.height) : 0
+            anchors.centerIn: parent
+            radius: FiliTheme.radiusControl
+            color: FiliTheme.background
+            border.width: FiliTheme.borderWidth
+            border.color: FiliTheme.border
+            Loader {
+                id: popupLoader
+                anchors { fill: parent; margins: FiliTheme.borderWidth }
+                active: win.popup !== null
+                sourceComponent: TerminalView {
+                    cwd: win.popup ? win.popup.cwd : ""
+                    command: win.popup ? win.popup.command : []
+                    fontFamily: FiliTheme.mono
+                    fontPixelSize: win.fontSize
+                    padding: win.settings.padding
+                    lineSpacing: win.settings.line_spacing
+                    colors: FiliTheme.terminalColors
+                    onExited: win.closePopup()
+                    Component.onCompleted: forceActiveFocus()
+                }
             }
         }
     }

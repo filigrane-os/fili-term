@@ -282,6 +282,15 @@ impl Adapter {
             ("swap", _) => ("pane.swap", json!({"source_pane_id": id, "target_pane_id": a["with"]})),
             // The panes of a tab, as Aéroport lays them out: the keyboard, zoom, a divider moved by keys or dragged
             ("focus-pane", _) => ("pane.focus", json!({"pane_id": id})),
+            ("clear", _) => ("pane.clear", json!({"pane_id": id})),
+            ("edit-scrollback", _) => ("pane.edit_scrollback", json!({"pane_id": id})),
+            // A custom command of type "pane": a pane beside, whose shell becomes the command (it closes when it ends)
+            ("run-pane", _) => {
+                let r = req.call("pane.split", json!({"target_pane_id": id, "direction": "right", "focus": true}))?;
+                let pane = find_pane_id(&r).ok_or("herdr gave no new pane")?;
+                let command = a["command"].as_str().unwrap_or("");
+                ("pane.send_text", json!({"pane_id": pane, "text": format!("exec sh -c {}\n", shell_quote(command))}))
+            }
             ("zoom", _) => ("pane.zoom", json!({"pane_id": id})),
             ("resize", _) => ("pane.resize", json!({"pane_id": id, "direction": a["direction"].as_str().unwrap_or("right")})),
             ("ratio", _) => (
@@ -309,8 +318,7 @@ impl Adapter {
 }
 
 /// herdr's key bindings (its `[keys]` defaults, 0.9.5): Aéroport shows herdr's panes without herdr's client, so it
-/// answers them itself in herdr's tabs. Actions without an equivalent here (help, zoom, resize, edit_scrollback…) are left
-/// out.
+/// answers them itself in herdr's tabs. Actions without an equivalent here (navigate mode, copy mode) are left out.
 const KEYS: &[(&str, &str)] = &[
     ("settings", "prefix+s"),
     ("detach", "prefix+q"),
@@ -350,6 +358,14 @@ const KEYS: &[(&str, &str)] = &[
     ("split_horizontal", "prefix+minus"),
     ("close_pane", "prefix+x"),
     ("zoom", "prefix+z"),
+    ("swap_pane_left", ""),
+    ("swap_pane_down", ""),
+    ("swap_pane_up", ""),
+    ("swap_pane_right", ""),
+    ("resize_mode", "prefix+r"),
+    ("edit_scrollback", "prefix+e"),
+    ("clear_pane", ""),
+    ("help", "prefix+?"),
     ("resize_pane_left", ""),
     ("resize_pane_down", ""),
     ("resize_pane_up", ""),
@@ -497,6 +513,7 @@ pub fn keys_json(config: &str) -> String {
             }
         }
     }
+    let commands = commands(config);
     let prefix = set.get("prefix").cloned().unwrap_or_else(|| "ctrl+b".into());
     // `fullscreen` is herdr's older name of `zoom`
     if let Some(f) = set.get("fullscreen").cloned() {
@@ -523,7 +540,50 @@ pub fn keys_json(config: &str) -> String {
             out.push(json!({"action": format!("{action}:{n}"), "keys": keys}));
         }
     }
+    // Custom commands ([[keys.command]]): "command:INDEX" in the list of commands_json
+    for (i, c) in commands.iter().enumerate() {
+        let keys: Vec<String> = qt_binding(c["key"].as_str().unwrap_or(""), &prefix).into_iter().map(|(_, k)| k).collect();
+        if !keys.is_empty() {
+            out.push(json!({"action": format!("command:{i}"), "keys": keys}));
+        }
+    }
     Value::Array(out).to_string()
+}
+
+/// herdr's custom commands, `[[keys.command]]` blocks: [{key, type (shell | pane | popup), command, width, height,
+/// description}] in the order of the file
+pub fn commands(config: &str) -> Vec<Value> {
+    let mut out: Vec<serde_json::Map<String, Value>> = Vec::new();
+    let mut inside = false;
+    for line in config.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            inside = line.replace(' ', "") == "[[keys.command]]";
+            if inside {
+                out.push(serde_json::Map::new());
+            }
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let v = v.trim();
+        // A quoted value keeps its # ; an unquoted one ends at a comment
+        let value = if let Some(rest) = v.strip_prefix('"') {
+            Value::String(rest.split('"').next().unwrap_or("").to_string())
+        } else {
+            let bare = v.split('#').next().unwrap_or("").trim();
+            bare.parse::<i64>().map(Value::from).unwrap_or_else(|_| Value::String(bare.to_string()))
+        };
+        if let Some(last) = out.last_mut() {
+            last.insert(k.trim().to_string(), value);
+        }
+    }
+    out.into_iter().filter(|c| c.get("command").is_some()).map(Value::Object).collect()
 }
 
 /// Socket of a herdr client running as `pid` (its own options and environment), else the default one of this process'
@@ -631,6 +691,22 @@ fn layout_tree(layout: &Value, items: &[Value]) -> Value {
     let f = |k: &str| area[k].as_f64().unwrap_or(0.0);
     let tree = build("", f("x"), f("y"), f("width").max(1.0), f("height").max(1.0), &splits, &rects, &item);
     if tree.is_null() { items.first().cloned().unwrap_or(Value::Null) } else { tree }
+}
+
+/// The pane id in an answer of herdr (pane.split: {"pane": {"pane_id"}} or deeper)
+fn find_pane_id(v: &Value) -> Option<String> {
+    if let Some(id) = v["pane"]["pane_id"].as_str() {
+        return Some(id.to_string());
+    }
+    match v {
+        Value::Object(m) => m.values().find_map(find_pane_id),
+        _ => None,
+    }
+}
+
+/// A word for sh, in single quotes
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn panes_of(snap: &Value) -> BTreeSet<String> {
@@ -847,6 +923,23 @@ mod tests {
         assert_eq!(find("close_tab"), None);
         assert_eq!(find("previous_tab"), Some(json!(["Ctrl+A, P"])));
         assert_eq!(find("switch_workspace:2"), Some(json!(["Ctrl+A, Shift+2"])));
+    }
+
+    #[test]
+    fn custom_commands() {
+        let cfg = "[keys]\nprefix = \"ctrl+a\"\n[[keys.command]]\nkey = \"prefix+alt+g\"\ntype = \"popup\"\ncommand = \"lazygit # not a comment\"\nwidth = \"80%\"\nheight = 30 # cells\n\n[[keys.command]]\nkey = \"ctrl+alt+t\"\ntype = \"shell\"\ncommand = \"notify-send hi\"\n[ui]\nx = 1\n";
+        let c = commands(cfg);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0]["command"], "lazygit # not a comment");
+        assert_eq!(c[0]["height"], 30);
+        assert_eq!(c[0]["width"], "80%");
+        assert_eq!(c[1]["type"], "shell");
+        let v: Value = serde_json::from_str(&keys_json(cfg)).unwrap();
+        let find = |a: &str| v.as_array().unwrap().iter().find(|x| x["action"] == a).map(|x| x["keys"].clone());
+        assert_eq!(find("command:0"), Some(json!(["Ctrl+A, Alt+G"])));
+        assert_eq!(find("command:1"), Some(json!(["Ctrl+Alt+T"])));
+        assert_eq!(find("resize_mode"), Some(json!(["Ctrl+A, R"])));
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
     }
 
     #[test]

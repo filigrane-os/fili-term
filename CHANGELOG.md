@@ -57,6 +57,12 @@
   In a herdr tab, right click works as in herdr's client: the pane menu always, even when the program takes the
   mouse; herdr's `[ui] right_click_passthrough_modifier` (e.g. "ctrl+alt") sends it to the program instead.
 - Close Workspace (herdr) closes at once, without a confirmation.
+- More of herdr's keys in its tabs: swap_pane_* (swap with the neighbour), resize_mode (prefix+r: arrows or h j k l,
+  Esc or Enter to finish, said in the footer), edit_scrollback (prefix+e: herdr opens the history in the editor, in a
+  pane), clear_pane, help (prefix+?: herdr's bindings by family, each runnable from the menu), and the custom commands
+  of herdr's config (`[[keys.command]]`): type shell in the background, pane in a temporary herdr pane, popup in a
+  terminal over the tab (width and height in cells or %), each with HERDR_SOCKET_PATH, HERDR_PANE_ID and
+  HERDR_WORKSPACE_ID.
 - Each pane has its own scroll bar, block hover strip and drop target; search follows the active pane.
 
 - herdr tabs show all their panes, laid out as herdr has them (splits and ratios from its layout), each pane attached

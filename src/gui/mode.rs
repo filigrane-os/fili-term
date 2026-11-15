@@ -45,6 +45,18 @@ pub mod qobject {
         fn config_path(self: &ModeClient) -> QString;
         /// Modifiers (Qt mask) that send a right click to the program instead of the menu, from herdr's
         /// `[ui] right_click_passthrough_modifier` (0: none, herdr's default)
+        /// herdr's custom commands ([[keys.command]]), JSON [{key, type, command, width, height}]
+        #[qinvokable]
+        #[cxx_name = "commandsJson"]
+        fn commands_json(self: &ModeClient) -> QString;
+        /// A command of herdr's environment (its socket, the pane and workspace it acts on), run by sh: for a popup tab
+        #[qinvokable]
+        #[cxx_name = "commandLine"]
+        fn command_line(self: &ModeClient, command: &QString, pane: &QString, workspace: &QString) -> QStringList;
+        /// The same, detached in the background (custom command of type "shell")
+        #[qinvokable]
+        #[cxx_name = "runShell"]
+        fn run_shell(self: &ModeClient, command: &QString, cwd: &QString, pane: &QString, workspace: &QString);
         #[qinvokable]
         #[cxx_name = "rightClickPass"]
         fn right_click_pass(self: &ModeClient) -> i32;
@@ -136,6 +148,55 @@ impl qobject::ModeClient {
 
     fn keys_json(&self) -> QString {
         QString::from(&herdr::keys_json(&std::fs::read_to_string(herdr::config_path()).unwrap_or_default()))
+    }
+
+    fn commands_json(&self) -> QString {
+        let cfg = std::fs::read_to_string(herdr::config_path()).unwrap_or_default();
+        QString::from(&serde_json::Value::Array(herdr::commands(&cfg)).to_string())
+    }
+
+    fn command_line(&self, command: &QString, pane: &QString, workspace: &QString) -> QStringList {
+        let mut l = QStringList::default();
+        for a in [
+            "env".to_string(),
+            format!("HERDR_SOCKET_PATH={}", self.socket.display()),
+            format!("HERDR_PANE_ID={pane}"),
+            format!("HERDR_WORKSPACE_ID={workspace}"),
+            "sh".into(),
+            "-c".into(),
+            command.to_string(),
+        ] {
+            l.append(QString::from(&a));
+        }
+        l
+    }
+
+    fn run_shell(&self, command: &QString, cwd: &QString, pane: &QString, workspace: &QString) {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(command.to_string())
+            .env("HERDR_SOCKET_PATH", &self.socket)
+            .env("HERDR_PANE_ID", pane.to_string())
+            .env("HERDR_WORKSPACE_ID", workspace.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let dir = cwd.to_string();
+        if !dir.is_empty() && std::path::Path::new(&dir).is_dir() {
+            cmd.current_dir(dir);
+        }
+        // SAFETY: setsid is async-signal-safe; the command outlives the window
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        if let Ok(mut child) = cmd.spawn() {
+            // Reaped in a thread: no zombie while the window lives
+            std::thread::spawn(move || child.wait());
+        }
     }
 
     fn right_click_pass(&self) -> i32 {
