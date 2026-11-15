@@ -94,6 +94,12 @@ QtObject {
                     target.runNamed(parts.slice(1).join(" "));
                 return;
             }
+            if (parts[0] === "machine") {
+                const target = root.windows.find(x => x.active) || root.windows[root.windows.length - 1];
+                if (target)
+                    target.runMachine(parts.slice(1).join(" "));
+                return;
+            }
             if (parts[0] === "worktree") {
                 const target = root.windows.find(x => x.active) || root.windows[root.windows.length - 1];
                 if (target)

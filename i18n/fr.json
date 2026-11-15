@@ -184,5 +184,8 @@
  "Remove": "Supprimer",
  "Type in Every Pane": "Taper dans tous les volets",
  "Typing in every pane of the tab": "Saisie dans tous les volets de l’onglet",
- "Stop": "Arrêter"
+ "Stop": "Arrêter",
+ "Machines": "Machines",
+ "This Computer": "Cet ordinateur",
+ "No machine named %1": "Aucune machine nommée %1"
 }

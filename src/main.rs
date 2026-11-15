@@ -18,7 +18,7 @@ fn usage() -> i32 {
          fili-term output [--session ID] [--all] [BLOCK] output of a command (default: the last one)\n       \
          fili-term send [--session ID] TEXT              types TEXT at the prompt, without Enter\n       \
          fili-term keymap [default|mac|tmux|none]         show or choose the keyboard shortcuts\n       \
-         fili-term mode herdr                             herdr's tabs as tabs of the window, its agents in the sidebar\n       \
+         fili-term mode herdr [--remote TARGET [--session NAME]]   herdr's tabs as tabs of the window, its agents in the sidebar\n       \
          fili-term ctl [--pid PID] action NAME | actions\n       \
          fili-term report [--session ID] working|blocked|done|idle [--agent NAME]   an agent's state (hooks)\n\n\
          Opens a terminal window (Aéroport); sessions live in the daemon and survive their window.\n\
@@ -110,13 +110,40 @@ fn keymap(args: &[String]) -> i32 {
     }
 }
 
-/// `fili-term mode KIND`: the integrated mode of the program in the window being used (herdr: its tabs as tabs of the
-/// window, its workspaces and agents in the sidebar; its server is started when it does not run)
+/// `fili-term mode KIND [--remote TARGET [--session NAME]]`: the integrated mode of the program in the window being used
+/// (herdr: its tabs as tabs of the window, its workspaces and agents in the sidebar; its server is started when it does
+/// not run). With --remote, the herdr server of that machine through SSH; the window gets "KIND|TARGET|SESSION".
 fn mode(args: &[String]) -> i32 {
-    let [kind] = args else {
-        eprintln!("usage: fili-term mode herdr");
-        return 2;
+    let usage = || {
+        eprintln!("usage: fili-term mode herdr [--remote SSH_TARGET [--session NAME]]");
+        2
     };
+    let (mut kind, mut remote, mut session) = (None, None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--remote" => remote = it.next().cloned(),
+            "--session" => session = it.next().cloned(),
+            k if kind.is_none() && !k.starts_with('-') => kind = Some(k.to_string()),
+            _ => return usage(),
+        }
+    }
+    let Some(kind) = kind else { return usage() };
+    if session.is_some() && remote.is_none() {
+        eprintln!("fili-term mode: --session needs --remote");
+        return 2;
+    }
+    if let Some(r) = &remote {
+        if !modes::herdr::valid_ssh_target(r) || r.contains(['|', ',']) {
+            eprintln!("fili-term mode: not an SSH target: {r}");
+            return 2;
+        }
+    }
+    if session.as_ref().is_some_and(|s| s.is_empty() || s.contains(['|', ',']) || s.chars().any(|c| c.is_whitespace() || c.is_control())) {
+        eprintln!("fili-term mode: not a session name");
+        return 2;
+    }
+    let kind = &kind;
     if !gui::settings::MODES.contains(&kind.as_str()) {
         eprintln!("fili-term mode: no integration for {kind} (known: {})", gui::settings::MODES.join(", "));
         return 2;
@@ -126,7 +153,11 @@ fn mode(args: &[String]) -> i32 {
         eprintln!("fili-term mode: {kind} is not installed (not in PATH)");
         return 1;
     }
-    open(&["--tab".into(), "--mode".into(), kind.clone()])
+    let spec = match remote {
+        Some(r) => format!("{kind}|{r}|{}", session.unwrap_or_default()),
+        None => kind.clone(),
+    };
+    open(&["--tab".into(), "--mode".into(), spec])
 }
 
 fn list() -> i32 {

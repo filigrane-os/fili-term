@@ -316,7 +316,7 @@ Window {
     property var commands: JSON.parse(Aeroport.commandsJson())
     Connections {
         target: Aeroport
-        function onWindowChanged() { win.commands = JSON.parse(Aeroport.commandsJson()) }
+        function onWindowChanged() { win.commands = JSON.parse(Aeroport.commandsJson()); modeClient.refreshMachines() }
     }
     function runCustom(c) {
         const v = view, t = tab;
@@ -581,6 +581,10 @@ Window {
     }
     readonly property var swapLabels: ({ left: "With the Pane on the Left", right: "With the Pane on the Right", up: "With the Pane Above", down: "With the Pane Below" })
     function menuAction(id) {
+        if (id.startsWith("machine:")) {
+            switchMachine(id.slice(8));
+            return;
+        }
         if (id.startsWith("cmd:")) {
             runCustom(commands[parseInt(id.slice(4))]);
             return;
@@ -667,15 +671,72 @@ Window {
         return v && v.paneTab && v.paneTab.modeTab === "" && modeClient.state === "" ? modeKind(v.foreground) : "";
     }
     // Start the mode: from a tab where the program runs (its client leaves, the tab goes back to its shell), or alone
-    function startMode(kind, fromTab) {
+    // `spec` is a program ("herdr"), or "herdr|TARGET|SESSION": its server on that machine through SSH
+    function startMode(spec, fromTab) {
         if (modeClient.state !== "")
             return;
+        const parts = spec.split("|");
+        const kind = parts[0];
         modeAt = fromTab ? tabs.indexOf(fromTab.paneTab) + 1 : tabs.length;
         modeActive = "";
-        if (!modeClient.start(kind, fromTab ? fromTab.foregroundPid() : 0))
+        const ok = parts.length > 1 ? modeClient.startTarget(kind, parts[1], parts[2] || "") : modeClient.start(kind, fromTab ? fromTab.foregroundPid() : 0);
+        if (!ok) {
             Aeroport.notify(Aeroport.tr("Cannot integrate %1").replace("%1", kind), Aeroport.tr("Its server could not be found."));
-        else
+            // A window opened for the mode alone must not stay empty
+            if (tabs.length === 0)
+                addTab(0, cwd, []);
+        } else
             modeNote.show();
+    }
+    // The machines herdr can run on: this computer, then those of `herdr machine list` and [[machines]] of fili-term.toml
+    readonly property var machines: modeClient.machines !== "" ? JSON.parse(modeClient.machines) : []
+    property bool switching: false
+    // Move the mode to another machine ("local", or an index of `machines`): the mode stops, its tabs go, it starts there
+    function switchMachine(id) {
+        const m = id === "local" ? { ssh: "", session: "" } : machines[parseInt(id.replace("m:", ""))];
+        if (!m || (modeClient.state !== "" && m.ssh === modeClient.host))
+            return;
+        // The tabs of the mode go with it: the window must not close in between
+        switching = true;
+        if (modeClient.state !== "")
+            modeClient.stop();
+        startMode(m.ssh === "" ? "herdr" : "herdr|" + m.ssh + "|" + (m.session || ""), null);
+        switching = false;
+    }
+    // The Machines section of the sidebar: this computer and the machines of the list, the one herdr runs on marked; none
+    // while there is nothing to choose from
+    function machinesSection() {
+        const here = modeClient.state !== "" ? modeClient.host : null;
+        if (machines.length === 0 && !here)
+            return null;
+        const items = [{ id: "local", label: Aeroport.tr("This Computer"), detail: "", status: "", active: here === "" }];
+        let known = here === "" || here === null;
+        machines.forEach((m, i) => {
+            known = known || m.ssh === here;
+            items.push({ id: "m:" + i, label: m.label, detail: m.session || "", status: "", active: m.ssh === here });
+        });
+        // A machine herdr was started on by hand (`fili-term mode herdr --remote …`) is shown too
+        if (!known)
+            items.push({ id: "", label: here, detail: "", status: "", active: true });
+        return { key: "machines", title: "Machines", add: false, items: items };
+    }
+    // `fili-term ctl machine NAME`: a machine by its label, or this computer ("local")
+    function runMachine(name) {
+        const i = machines.findIndex(m => m.label === name);
+        if (name === "local" || name === Aeroport.tr("This Computer"))
+            switchMachine("local");
+        else if (i >= 0)
+            switchMachine("m:" + i);
+        else
+            showError(Aeroport.tr("No machine named %1").replace("%1", name));
+    }
+    // The machines under the top left of the terminal (action machines)
+    function machinePicker() {
+        const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4);
+        const here = modeClient.state !== "" ? modeClient.host : null;
+        const entries = [{ id: "machine:local", label: Aeroport.tr("This Computer"), checked: here === "" }]
+            .concat(machines.map((m, i) => ({ id: "machine:m:" + i, label: m.label, checked: here === m.ssh })));
+        contextMenu.open(p.x, p.y, entries);
     }
     // Menu "Integrate Program": the program of the tab, or leave the mode that runs
     function integrate() {
@@ -805,7 +866,7 @@ Window {
         else if (tabs.length > 0)
             select(Math.min(current, tabs.length - 1));
         modeActive = active ? active.id : "";
-        if (tabs.length === 0 && !st)
+        if (tabs.length === 0 && !st && !switching)
             win.close();
     }
     // herdr's agents in the sidebar: grouped by workspace (a heading per workspace) or by priority (waiting for you, then
@@ -854,6 +915,11 @@ Window {
             { key: "workspaces", title: "Workspaces", add: true, items: spaces },
             { key: "agents", title: "Agents", add: false, items: sortedAgents(agents), choice: agentsSort === "priority" ? Aeroport.tr("Priority") : Aeroport.tr("Grouped") }
         ] };
+    }
+    // The window's own sidebar, with the machines when there are some to start herdr on
+    function nativeWithMachines() {
+        const box = machinesSection();
+        return box ? Object.assign({}, nativeModel, { sections: nativeModel.sections.concat([box]) }) : nativeModel;
     }
     // Show a workspace: the tab shown last in it
     function showWorkspace(id) {
@@ -966,11 +1032,12 @@ Window {
     // Sidebar: herdr's sections, agents sorted (the panes are in the tab itself)
     readonly property var sidebarModel: {
         if (!modeState)
-            return nativeSidebarShown ? nativeModel : null;
+            return nativeSidebarShown ? nativeWithMachines() : null;
         const v = tab;
         const sections = modeState.sections.map(sec => sec.key !== "agents" ? sec
             : Object.assign({}, sec, { items: sortedAgents(sec.items), choice: agentsSort === "priority" ? Aeroport.tr("Priority") : Aeroport.tr("Grouped") }));
-        return Object.assign({}, modeState, { sections: sections });
+        const machinesBox = machinesSection();
+        return Object.assign({}, modeState, { sections: machinesBox ? sections.concat([machinesBox]) : sections });
     }
 
     // Context menus of herdr's tabs, workspaces, panes and agents (the entries of herdr's own right-click menus)
@@ -1272,6 +1339,7 @@ Window {
         else if (name === "edit-scrollback") win.editScrollback();
         else if (name === "next-agent") win.nextAgent();
         else if (name === "commands") win.commandPicker();
+        else if (name === "machines") win.machinePicker();
         else if (name === "broadcast") win.toggleBroadcast();
         else if (name === "new-worktree") { if (v && win.tab && win.tab.modeTab === "") { const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4); win.worktreeNew(p.x, p.y, v.cwd, win.tab.workspace) } }
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
@@ -1349,7 +1417,7 @@ Window {
     }
     // `fili-term mode herdr`: the window opens on herdr's tabs only
     property string initialMode: ""
-    Component.onCompleted: restore !== "" ? restoreLayout() : initialMode !== "" ? startMode(initialMode, null) : addTab(attachId, cwd, command)
+    Component.onCompleted: { modeClient.refreshMachines(); restore !== "" ? restoreLayout() : initialMode !== "" ? startMode(initialMode, null) : addTab(attachId, cwd, command) }
     signal closed()
     onClosing: {
         for (const t of tabs)
@@ -1621,14 +1689,16 @@ Window {
         mode: win.sidebarModel
         canLeave: win.modeState !== null
         onActivated: (section, id) => {
-            if (win.modeState)
+            if (section === "machines")
+                win.switchMachine(id);
+            else if (win.modeState)
                 win.modeAct({ op: "select", section: section, id: id });
             else
                 win.nativeActivate(section, id);
             win.refocus();
         }
         onAdded: section => { if (win.modeState) win.modeAct({ op: "new", section: section }); else win.newWorkspace(); win.refocus() }
-        onContextRequested: (section, item, x, y) => { if (win.modeState) win.herdrMenu(section, item, x, y); else win.nativeSidebarMenu(section, item, x, y) }
+        onContextRequested: (section, item, x, y) => { if (section === "machines") return; if (win.modeState) win.herdrMenu(section, item, x, y); else win.nativeSidebarMenu(section, item, x, y) }
         onChoiceClicked: section => { if (section === "agents") win.toggleAgentsSort() }
         onLeave: { win.leaveMode(); win.refocus() }
     }

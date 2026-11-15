@@ -17,6 +17,8 @@ pub mod qobject {
         #[qproperty(QString, kind)]
         /// The machine herdr runs on, through SSH (`herdr --remote TARGET`); "" for this one
         #[qproperty(QString, host)]
+        /// The machines to offer, JSON [{label, ssh, session}] ("[]" before the first look)
+        #[qproperty(QString, machines)]
         type ModeClient = super::ModeClientRust;
 
         /// The program asks for attention (JSON {kind, agent, place})
@@ -31,6 +33,16 @@ pub mod qobject {
         /// False when the program cannot be integrated.
         #[qinvokable]
         fn start(self: Pin<&mut ModeClient>, kind: &QString, pid: i32) -> bool;
+        /// The same on a machine named, not on the one a client runs on: `ssh` is an SSH target (with `session` the
+        /// remote session, "" for its default), "" for this computer. False when the program cannot be integrated.
+        #[qinvokable]
+        #[cxx_name = "startTarget"]
+        fn start_target(self: Pin<&mut ModeClient>, kind: &QString, ssh: &QString, session: &QString) -> bool;
+        /// Look for the machines to offer (`herdr machine list --json`, then [[machines]] of fili-term.toml) in the
+        /// background; the property machines follows
+        #[qinvokable]
+        #[cxx_name = "refreshMachines"]
+        fn refresh_machines(self: Pin<&mut ModeClient>);
         #[qinvokable]
         fn stop(self: Pin<&mut ModeClient>);
         /// An action (JSON of src/modes)
@@ -82,8 +94,38 @@ use cxx_qt_lib::{QString, QStringList};
 
 use crate::modes::{self, Mode, Out, herdr};
 
+/// `herdr machine list --json`, given three seconds (it only reads a file; a hung program must not hang a thread for good)
+fn herdr_machine_list() -> Option<String> {
+    use std::io::Read;
+    let mut child = std::process::Command::new("herdr")
+        .args(["machine", "list", "--json"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => {
+                let mut out = String::new();
+                child.stdout.take()?.read_to_string(&mut out).ok()?;
+                return Some(out);
+            }
+            Some(_) => return None,
+            None if started.elapsed() > std::time::Duration::from_secs(3) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ModeClientRust {
+    machines: QString,
     state: QString,
     kind: QString,
     host: QString,
@@ -98,7 +140,7 @@ pub struct ModeClientRust {
 }
 
 impl qobject::ModeClient {
-    fn start(mut self: Pin<&mut Self>, kind: &QString, pid: i32) -> bool {
+    fn start(self: Pin<&mut Self>, kind: &QString, pid: i32) -> bool {
         let kind = kind.to_string();
         if modes::KINDS.iter().all(|k| *k != kind) {
             return false;
@@ -111,6 +153,43 @@ impl qobject::ModeClient {
             .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(kind.as_str())))
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| kind.clone());
+        self.begin(kind, target, pid, program)
+    }
+
+    fn start_target(self: Pin<&mut Self>, kind: &QString, ssh: &QString, session: &QString) -> bool {
+        let (kind, ssh, session) = (kind.to_string(), ssh.to_string(), session.to_string());
+        if modes::KINDS.iter().all(|k| *k != kind) {
+            return false;
+        }
+        let target = if ssh.is_empty() {
+            let Some(t) = herdr::target_for(None) else { return false };
+            t
+        } else if herdr::valid_ssh_target(&ssh) {
+            herdr::Target::Remote { ssh, session: Some(session).filter(|s| !s.is_empty()) }
+        } else {
+            eprintln!("fili-term: not an SSH target: {ssh}");
+            return false;
+        };
+        let program = kind.clone();
+        self.begin(kind, target, None, program)
+    }
+
+    fn refresh_machines(self: Pin<&mut Self>) {
+        let thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let listed = herdr_machine_list().map(|t| herdr::parse_machine_list(&t)).unwrap_or_default();
+            let config = herdr::machines_from_config(&std::fs::read_to_string(crate::gui::theme::path()).unwrap_or_default());
+            let json = herdr::machines_json(&herdr::merge_machines(listed, config));
+            let _ = thread.queue(move |mut this: Pin<&mut qobject::ModeClient>| {
+                if this.machines.to_string() != json {
+                    this.as_mut().set_machines(QString::from(&json));
+                }
+            });
+        });
+    }
+
+    /// Start the mode on a target: a local socket, or a server through SSH; `pid` is a client of it to replace
+    fn begin(mut self: Pin<&mut Self>, kind: String, target: herdr::Target, pid: Option<u32>, program: String) -> bool {
         let (socket, host, tunnel, client) = match target {
             herdr::Target::Local(socket) => {
                 let client = vec!["env".into(), format!("HERDR_SOCKET_PATH={}", socket.display()), program.clone()];

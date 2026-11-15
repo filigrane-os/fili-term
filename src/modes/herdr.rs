@@ -581,6 +581,74 @@ pub fn commands(config: &str) -> Vec<Value> {
     out.into_iter().filter(|c| c.get("command").is_some()).map(Value::Object).collect()
 }
 
+/// A machine herdr can run on through SSH (`herdr machine list`, or `[[machines]]` of fili-term.toml)
+#[derive(Debug, PartialEq, Clone)]
+pub struct Machine {
+    pub label: String,
+    pub ssh: String,
+    pub session: Option<String>,
+}
+
+/// An SSH target that is safe to hand to ssh: no option, no space, no control character
+pub fn valid_ssh_target(t: &str) -> bool {
+    !t.is_empty() && !t.starts_with('-') && t.len() <= 255 && t.chars().all(|c| !c.is_whitespace() && !c.is_control())
+}
+
+/// The machines of `herdr machine list --json`, whatever shape it has: a list, or an object holding one; each entry gives
+/// its SSH target (ssh, target, ssh_target, destination, host) and optionally a label (label, name) and a session
+pub fn parse_machine_list(json: &str) -> Vec<Machine> {
+    let Ok(v) = serde_json::from_str::<Value>(json) else { return Vec::new() };
+    let list = match &v {
+        Value::Array(a) => a.clone(),
+        Value::Object(o) => o.values().find_map(|x| x.as_array().cloned()).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let text = |e: &Value, keys: &[&str]| keys.iter().find_map(|k| e.get(*k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string));
+    list.iter()
+        .filter(|e| e.get("enabled").and_then(Value::as_bool).unwrap_or(true))
+        .filter_map(|e| {
+            // A target may be nested ({"ssh": {"target": …}})
+            let nested = e.get("ssh").filter(|s| s.is_object());
+            let ssh = text(e, &["ssh", "target", "ssh_target", "destination", "host"]).or_else(|| nested.and_then(|n| text(n, &["target", "destination", "host"])))?;
+            let session = text(e, &["session", "remote_session"]).or_else(|| nested.and_then(|n| text(n, &["session"])));
+            let label = text(e, &["label", "name"]).unwrap_or_else(|| ssh.clone());
+            valid_ssh_target(&ssh).then_some(Machine { label, ssh, session })
+        })
+        .collect()
+}
+
+/// The `[[machines]]` tables of fili-term.toml: label, ssh, session
+pub fn machines_from_config(text: &str) -> Vec<Machine> {
+    crate::gui::settings::tables_from(text, "machines")
+        .into_iter()
+        .filter_map(|t| {
+            let ssh = t.get("ssh")?.trim().to_string();
+            let session = t.get("session").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            let label = t.get("label").map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).unwrap_or_else(|| ssh.clone());
+            valid_ssh_target(&ssh).then_some(Machine { label, ssh, session })
+        })
+        .collect()
+}
+
+/// The machines to offer: those of `herdr machine list --json` (`listed`), then the ones of fili-term.toml, each
+/// (target, session) once
+pub fn merge_machines(listed: Vec<Machine>, config: Vec<Machine>) -> Vec<Machine> {
+    let mut out: Vec<Machine> = Vec::new();
+    for m in listed.into_iter().chain(config) {
+        if !out.iter().any(|o| o.ssh == m.ssh && o.session == m.session) {
+            out.push(m);
+        }
+    }
+    out
+}
+
+/// The machines as JSON for the QML: [{label, ssh, session}]
+pub fn machines_json(list: &[Machine]) -> String {
+    let q = |s: &str| crate::gui::terminal::json_string(s);
+    let items: Vec<String> = list.iter().map(|m| format!("{{\"label\":{},\"ssh\":{},\"session\":{}}}", q(&m.label), q(&m.ssh), q(m.session.as_deref().unwrap_or("")))).collect();
+    format!("[{}]", items.join(","))
+}
+
 /// Where a herdr client connects: a socket of this machine, or a server reached through SSH (`herdr --remote TARGET`)
 #[derive(Debug, PartialEq)]
 pub enum Target {
@@ -1040,5 +1108,47 @@ mod tests {
         assert!(notices[0].contains("\"blocked\"") && notices[0].contains("claude"));
         let (_, _, notices) = state_of(&snap, Some(&statuses), "herdr");
         assert!(notices.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod machine_tests {
+    use super::*;
+
+    fn m(label: &str, ssh: &str, session: Option<&str>) -> Machine {
+        Machine { label: label.into(), ssh: ssh.into(), session: session.map(str::to_string) }
+    }
+
+    #[test]
+    fn ssh_targets_that_are_safe() {
+        assert!(valid_ssh_target("me@box"));
+        assert!(valid_ssh_target("box.example.org"));
+        assert!(!valid_ssh_target("-oProxyCommand=evil"));
+        assert!(!valid_ssh_target("two words"));
+        assert!(!valid_ssh_target(""));
+        assert!(!valid_ssh_target("a\nb"));
+    }
+
+    #[test]
+    fn machine_list_shapes() {
+        assert_eq!(parse_machine_list("[]"), vec![]);
+        assert_eq!(parse_machine_list("not json"), vec![]);
+        let flat = r#"[{"label":"Build box","ssh":"me@build","session":"work"},{"name":"nas","target":"nas.lan","enabled":true},{"label":"off","ssh":"x","enabled":false},{"label":"bad","ssh":"-oX=1"},{"label":"none"}]"#;
+        assert_eq!(parse_machine_list(flat), vec![m("Build box", "me@build", Some("work")), m("nas", "nas.lan", None)]);
+        let wrapped = r#"{"machines":[{"label":"a","ssh_target":"a.lan"}]}"#;
+        assert_eq!(parse_machine_list(wrapped), vec![m("a", "a.lan", None)]);
+        let nested = r#"[{"label":"n","ssh":{"target":"n.lan","session":"s"}}]"#;
+        assert_eq!(parse_machine_list(nested), vec![m("n", "n.lan", Some("s"))]);
+    }
+
+    #[test]
+    fn machines_of_the_config_file_and_merging() {
+        let text = "font_size = 12\n\n[[machines]]\nlabel = \"Home\"\nssh = \"me@home\"\nsession = \"main\"\n\n[[machines]]\nssh = \"me@build\"\n\n[[machines]]\nssh = \"-oEvil\"\n\n[[machines]]\nlabel = \"no target\"\n";
+        let c = machines_from_config(text);
+        assert_eq!(c, vec![m("Home", "me@home", Some("main")), m("me@build", "me@build", None)]);
+        // herdr's own list first; the same target and session once
+        let merged = merge_machines(vec![m("Build box", "me@build", None)], c);
+        assert_eq!(merged, vec![m("Build box", "me@build", None), m("Home", "me@home", Some("main"))]);
+        assert!(machines_json(&merged).starts_with("[{\"label\":\"Build box\",\"ssh\":\"me@build\",\"session\":\"\"}"));
     }
 }

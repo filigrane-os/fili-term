@@ -108,6 +108,23 @@ height = "90%"
 The pane menu has a Commands submenu, Ctrl+Alt+P (action `commands`) opens the same list, and
 `fili-term ctl command Lazygit` runs one by name from a script or a launcher.
 
+## herdr on another machine
+
+`fili-term mode herdr --remote me@box [--session NAME]` shows the herdr of another machine in the window, as a local one
+(its tabs are tabs of the window, its workspaces and agents fill the sidebar) through an SSH link kept up by Aéroport,
+which needs your key in ssh-agent (no question is asked). When there are machines to choose from, the sidebar has a
+Machines section: this computer, the machines of `herdr machine list` and the ones you list in fili-term.toml:
+
+```toml
+[[machines]]
+label = "Build box"
+ssh = "me@build.lan"
+session = "work"        # optional: the remote herdr session
+```
+
+A click moves the mode there; Shell > Machines… (action `machines`, no key by default) and
+`fili-term ctl machine "Build box"` (or `local`) do the same.
+
 ## Typing in every pane
 
 Ctrl+Alt+I (Type in Every Pane in the pane menu, tmux prefix+S) sends what you type or paste in a pane of the tab to

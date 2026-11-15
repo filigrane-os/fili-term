@@ -139,8 +139,9 @@ fn command_value(v: &str) -> String {
     }
 }
 
-/// The `[[commands]]` tables of the file; an entry without a command or with an unknown type is left out
-pub fn commands_from(text: &str) -> Vec<Command> {
+/// The `[[name]]` tables of the file as key → value maps (values as `command_value` reads them)
+pub fn tables_from(text: &str, name: &str) -> Vec<std::collections::BTreeMap<String, String>> {
+    let header = format!("[[{name}]]");
     let mut tables: Vec<std::collections::BTreeMap<String, String>> = Vec::new();
     let mut inside = false;
     for line in text.lines() {
@@ -149,7 +150,7 @@ pub fn commands_from(text: &str) -> Vec<Command> {
             continue;
         }
         if line.starts_with('[') {
-            inside = line.split('#').next().unwrap_or("").replace(' ', "") == "[[commands]]";
+            inside = line.split('#').next().unwrap_or("").replace(' ', "") == header;
             if inside {
                 tables.push(Default::default());
             }
@@ -160,6 +161,11 @@ pub fn commands_from(text: &str) -> Vec<Command> {
         }
     }
     tables
+}
+
+/// The `[[commands]]` tables of the file; an entry without a command or with an unknown type is left out
+pub fn commands_from(text: &str) -> Vec<Command> {
+    tables_from(text, "commands")
         .into_iter()
         .filter_map(|t| {
             let command = t.get("command")?.trim().to_string();

@@ -128,6 +128,14 @@
   pasted in a pane of the tab also goes to all the others, so one command runs on several machines at once. The panes
   have a coloured border and the footer says "Typing in every pane of the tab" with Stop. A paste is wrapped by each
   receiving pane's own paste mode. Per tab, off by default, not for herdr's tabs.
+- herdr on another machine from anywhere: `fili-term mode herdr --remote SSH_TARGET [--session NAME]` opens its tabs in
+  the window through the SSH link (an SSH target that starts with - or holds a space is refused). The sidebar gets a
+  Machines section (this computer first, then the machines of `herdr machine list --json` and the `[[machines]]`
+  tables of fili-term.toml: label, ssh, session) when there is something to choose from, a click moves the mode there
+  (it stops, its tabs go, it starts on the other machine; the window stays), the picker Machines… (action machines)
+  lists them too, and `fili-term ctl machine NAME|local` does it from a script. Tested against a user sshd and a
+  private herdr server; `herdr machine list --json` has only been read leniently (list, or object holding a list;
+  ssh / target / ssh_target / destination / host, label / name, session), never against a real saved machine.
 
 ## v2.0.0 (2026-11-12)
 
