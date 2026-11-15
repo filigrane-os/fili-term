@@ -62,6 +62,34 @@ reads the output itself with `fili-term output`.
 
 Colour queries (OSC 10/11/4) are answered with the theme's palette.
 
+## Agents
+
+A pane knows when an AI agent runs in it (the process in its foreground: claude, codex, opencode, gemini, aider, goose,
+amp, cursor-agent, copilot, crush, qwen, kimi, droid, pi, also under node, bun or python; `[agents] programs = [...]` in
+fili-term.toml replaces the list) and what it does: working, waiting for you, done (finished while you looked
+elsewhere), idle. Without any setup, as herdr does, the state comes from what the agent shows: the title it sets (Claude
+Code's spinner), the bottom of its screen ("esc to interrupt", "Do you want to proceed?", "Allow command?", "[y/n]"…), a
+bell, output that keeps coming. The tab shows it (spinner, bell, check), the pane's name chip too when the tab has
+several panes, and a notification comes when an agent waits or finished in a pane you do not see (a click on it shows
+the pane). Ctrl+Alt+A (action next-agent, tmux prefix+a) goes to the next agent waiting for you, else to one that
+finished.
+
+For exact states, an agent's hooks can tell them: `fili-term report working|blocked|done|idle [--agent NAME]` (the
+session is `$FILI_TERM_SESSION`; outside Aéroport it does nothing, so hooks set for every terminal are harmless). A
+reported state wins for ten minutes, until you answer (a key in the pane drops a "blocked" or "done"). For Claude Code,
+in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "fili-term report working" }] }],
+    "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "fili-term report working" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "fili-term report blocked" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "fili-term report done" }] }]
+  }
+}
+```
+
 ## Integrated modes
 
 When the program runs in a tab: `herdr` typed in a terminal is integrated at once (the daemon reads the foreground

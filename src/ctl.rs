@@ -19,7 +19,7 @@ pub const ACTIONS: &[&str] = &[
     "tab-1", "tab-2", "tab-3", "tab-4", "tab-5", "tab-6", "tab-7", "tab-8", "tab-9", "edit-output",
     "ask-rob", "integrate", "toggle-sidebar", "split-right", "split-down", "close-pane", "zoom-pane", "focus-left",
     "focus-right", "focus-up", "focus-down", "resize-left", "resize-right", "resize-up", "resize-down", "context-menu",
-    "rename-pane", "resize-mode", "edit-scrollback",
+    "rename-pane", "resize-mode", "edit-scrollback", "next-agent",
 ];
 
 fn dir() -> Option<PathBuf> {
@@ -31,6 +31,19 @@ fn dir() -> Option<PathBuf> {
 
 fn answer(request: &str) -> (String, Option<String>) {
     let (verb, name) = request.trim().split_once('\t').unwrap_or((request.trim(), ""));
+    if verb == "report" {
+        // report<TAB>SESSION<TAB>STATE<TAB>AGENT: for the window holding that session (agents' hooks)
+        let parts: Vec<&str> = name.split('\t').collect();
+        return match parts.as_slice() {
+            [session, state, rest @ ..]
+                if session.parse::<u32>().is_ok() && crate::gui::agents::State::parse(state).is_some() && rest.len() <= 1 =>
+            {
+                let agent: String = rest.first().unwrap_or(&"").chars().filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c)).take(40).collect();
+                ("{\"ok\":true}".into(), Some(format!("report\t{session}\t{}\t{agent}", state.trim().to_ascii_lowercase())))
+            }
+            _ => ("{\"ok\":false,\"error\":\"usage: report SESSION STATE [AGENT]\"}".into(), None),
+        };
+    }
     if verb == "action" && ACTIONS.contains(&name) {
         ("{\"ok\":true}".into(), Some(name.to_owned()))
     } else if verb == "action" {
@@ -90,6 +103,38 @@ fn target(pid: Option<&str>) -> Option<PathBuf> {
     socks.pop().map(|(_, p)| p)
 }
 
+/// `fili-term report [--session ID] STATE [--agent NAME]` (an agent's hook): tell every window process; the one that
+/// holds the session shows the state. Silent and successful outside Aéroport, so a hook set for every terminal is harmless.
+pub fn report(args: &[String]) -> Result<(), String> {
+    let mut session: Option<u32> = std::env::var("FILI_TERM_SESSION").ok().and_then(|v| v.parse().ok());
+    let (mut state, mut agent) = (None, String::new());
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--session" => session = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--session needs a number")?),
+            "--agent" => agent = it.next().cloned().ok_or("--agent needs a name")?,
+            s if state.is_none() && crate::gui::agents::State::parse(s).is_some() => state = Some(s.to_string()),
+            other => return Err(format!("unknown state or option: {other} (working, blocked, done, idle)")),
+        }
+    }
+    let state = state.ok_or("usage: fili-term report [--session ID] working|blocked|done|idle [--agent NAME]")?;
+    let Some(session) = session else { return Ok(()) };
+    let Some(dir) = dir() else { return Ok(()) };
+    for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "sock") || !alive(&path.file_stem().unwrap_or_default().to_string_lossy()) {
+            continue;
+        }
+        if let Ok(mut c) = UnixStream::connect(&path) {
+            c.set_read_timeout(Some(Duration::from_millis(500))).ok();
+            let _ = c.write_all(format!("report\t{session}\t{state}\t{agent}\n").as_bytes());
+            c.shutdown(std::net::Shutdown::Write).ok();
+            let _ = c.read_to_string(&mut String::new());
+        }
+    }
+    Ok(())
+}
+
 const USAGE: &str = "usage: fili-term ctl [--pid PID] action NAME | actions";
 
 /// `fili-term ctl ...` (arguments after `ctl`): prints the JSON answer; Err carries the reason.
@@ -132,6 +177,17 @@ mod tests {
         assert!(reply.contains("\"ok\":false"));
         assert!(action.is_none());
         assert!(answer("nope").0.contains("unknown command"));
+    }
+
+    #[test]
+    fn reports_of_agents() {
+        let (reply, action) = answer("report\t12\tBlocked\tclaude\n");
+        assert_eq!(reply, "{\"ok\":true}");
+        assert_eq!(action.as_deref(), Some("report\t12\tblocked\tclaude"));
+        assert_eq!(answer("report\t12\tdone\t\n").1.as_deref(), Some("report\t12\tdone\t"));
+        assert_eq!(answer("report\t12\tdone\tx;rm -rf\n").1.as_deref(), Some("report\t12\tdone\txrm-rf"));
+        assert!(answer("report\tx\tdone\n").1.is_none());
+        assert!(answer("report\t12\tnonsense\n").1.is_none());
     }
 
     #[test]

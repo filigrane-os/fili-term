@@ -239,6 +239,74 @@ Window {
         if (e && !t.zoomed)
             t.toggleZoom();
     }
+    // Agents in panes (src/gui/agents.rs): each pane reads its agent's state once a second; someone watches a pane when
+    // the window is active and shows it
+    function watchedPane(v) {
+        return win.active && v.paneTab === tab && v.visible && (tab.zoomed === null || tab.zoomed === v);
+    }
+    Timer {
+        interval: 1000
+        repeat: true
+        running: true
+        onTriggered: {
+            for (const t of win.tabs)
+                if (t.modeTab === "")
+                    for (const v of t.leaves)
+                        v.agentTick(win.watchedPane(v));
+        }
+    }
+    // The pane of a session, null when it is not in this window
+    function paneOfSession(id) {
+        for (const t of tabs)
+            for (const v of t.leaves)
+                if (v.sessionId === id)
+                    return v;
+        return null;
+    }
+    function agentReport(id, state, agent) {
+        const v = paneOfSession(id);
+        if (v)
+            v.agentReport(state, agent);
+        return v !== null;
+    }
+    // Show a pane: its tab, the keyboard in it (the others shown again when another one was zoomed)
+    function showPane(v) {
+        const t = v.paneTab;
+        select(tabs.indexOf(t));
+        if (t.zoomed !== null && t.zoomed !== v)
+            t.toggleZoom();
+        t.setActive(v);
+        t.focusActive();
+    }
+    function showSession(id) {
+        const v = paneOfSession(id);
+        if (!v)
+            return false;
+        showPane(v);
+        win.requestActivate();
+        return true;
+    }
+    // The next agent that waits for you, else one that finished (after the active pane, in the order of the tabs)
+    function nextAgent() {
+        const all = [];
+        for (const t of tabs)
+            if (t.modeTab === "")
+                for (const v of t.leaves)
+                    if (v.agent !== "")
+                        all.push(v);
+        const from = all.indexOf(view) + 1;
+        const order = all.slice(from).concat(all.slice(0, from));
+        const v = order.find(x => x.agentState === "blocked" && x !== view) || order.find(x => x.agentState === "done" && x !== view);
+        if (v)
+            showPane(v);
+        else if (tab && tab.modeTab !== "")
+            herdrKey("open_notification_target");
+    }
+    // The worst state of the agents of a tab: blocked, then working, then done
+    function agentStateOf(t) {
+        const states = t ? t.leaves.map(v => v.agentState) : [];
+        return ["blocked", "working", "done"].find(s => states.indexOf(s) >= 0) || "";
+    }
     // Menu of a pane (right click, or Shift+right click when the program takes the mouse): copy and paste, the panes,
     // and in a tab of herdr the entries of herdr's pane menu
     function paneMenu(v, x, y) {
@@ -891,6 +959,7 @@ Window {
         else if (name === "rename-pane") win.renamePane();
         else if (name === "resize-mode") win.resizeMode();
         else if (name === "edit-scrollback") win.editScrollback();
+        else if (name === "next-agent") win.nextAgent();
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
         else if (name.startsWith("tab-")) { const n = parseInt(name.slice(4)); win.select(n === 9 ? win.tabs.length - 1 : n - 1) }
@@ -950,6 +1019,17 @@ Window {
             // Name given to the pane (Rename Pane…), shown at its top right when the tab has several
             property string paneName: ""
             onScrollbackReady: argv => win.openScrollback(term, argv)
+            // An agent waits for you or finished while nobody looks at its pane: a notification (a click shows the pane)
+            onAgentStateChanged: {
+                if ((agentState !== "blocked" && agentState !== "done") || win.watchedPane(term) || !term.paneTab || term.paneTab.modeTab !== "")
+                    return;
+                if (term.paneTab !== win.tab)
+                    term.paneTab.unseen = true;
+                const who = agent.charAt(0).toUpperCase() + agent.slice(1);
+                const where = term.paneName !== "" ? term.paneName : win.tabTitle(term.paneTab);
+                Aeroport.notifyThen(agentState === "blocked" ? Aeroport.tr("%1 is waiting for you").replace("%1", who) : Aeroport.tr("%1 finished").replace("%1", who),
+                                    where, "show-session\t" + term.sessionId);
+            }
             onForegroundChanged: {
                 const kind = win.modeKind(foreground);
                 if (kind !== "" && kind === declined)
@@ -1096,8 +1176,11 @@ Window {
                     readonly property var term: win.tabs[index]
                     readonly property var pane: term ? term.active : null
                     readonly property string running: { if (!pane) return ""; pane.blocksRevision; return pane.runningCommand() }
-                    readonly property string state: term.modeTab !== "" ? (term.modeStatus === "working" ? "running" : term.modeStatus === "blocked" ? "waiting" : term.modeStatus === "done" ? "ok" : "")
-                        : running !== "" ? "running" : term.unseen ? (term.lastExit === 0 ? "ok" : "failed") : ""
+                    // An agent's state first (Claude Code at its prompt is no running command)
+                    readonly property string agentState: term.modeTab !== "" ? term.modeStatus : win.agentStateOf(term)
+                    readonly property bool hasAgent: term.modeTab === "" && term.leaves.some(v => v.agent !== "")
+                    readonly property string state: agentState === "working" ? "running" : agentState === "blocked" ? "waiting" : agentState === "done" ? "ok"
+                        : term.modeTab !== "" || hasAgent ? "" : running !== "" ? "running" : term.unseen ? (term.lastExit === 0 ? "ok" : "failed") : ""
                     Icon {
                         id: stateIcon
                         visible: tab.state !== ""
@@ -1354,12 +1437,15 @@ Window {
                 // it steps aside while the pointer is over it
                 Rectangle {
                     id: nameChip
-                    // Its name: herdr's for a pane of herdr, the one given here (Rename Pane…) for the others
-                readonly property string label: pane.info ? (pane.info.named === true ? pane.info.label : "") : pane.v ? pane.v.paneName : ""
-                visible: label !== "" && win.tab !== null && win.tab.leaves.length > 1 && !win.tab.zoomed
+                    // Its name: herdr's for a pane of herdr, the one given here (Rename Pane…) for the others, else its agent
+                    readonly property string label: pane.info ? (pane.info.named === true ? pane.info.label : "") : !pane.v ? "" : pane.v.paneName !== "" ? pane.v.paneName : pane.v.agent
+                    // The state of the agent in a pane of this window (herdr's panes have theirs in its sidebar)
+                    readonly property string status: pane.info || !pane.v ? "" : pane.v.agentState
+                    readonly property bool dotShown: status !== "" && status !== "idle"
+                    visible: label !== "" && win.tab !== null && win.tab.leaves.length > 1 && !win.tab.zoomed
                     anchors { top: parent.top; right: parent.right; topMargin: FiliTheme.space1; rightMargin: FiliTheme.space3 }
                     z: 2
-                    width: Math.min(nameText.implicitWidth + 2 * FiliTheme.space2, parent.width / 2)
+                    width: Math.min(nameText.implicitWidth + 2 * FiliTheme.space2 + (dotShown ? 6 + FiliTheme.space1 : 0), parent.width / 2)
                     height: 20
                     radius: FiliTheme.radiusControl
                     color: FiliTheme.alpha(FiliTheme.backgroundDeep, 0.85)
@@ -1367,9 +1453,26 @@ Window {
                     border.color: pane.v === win.view ? FiliTheme.accentColor : FiliTheme.border
                     opacity: chipHover.containsMouse ? 0.15 : 1
                     Behavior on opacity { NumberAnimation { duration: 120 } }
+                    // Same colours as the sidebar: waiting for you, working, finished
+                    Rectangle {
+                        id: chipDot
+                        visible: nameChip.dotShown
+                        anchors { left: parent.left; leftMargin: FiliTheme.space2; verticalCenter: parent.verticalCenter }
+                        width: 6
+                        height: 6
+                        radius: 3
+                        color: nameChip.status === "blocked" ? FiliTheme.warning : nameChip.status === "working" ? FiliTheme.accentColor : FiliTheme.text
+                        SequentialAnimation on opacity {
+                            running: nameChip.status === "working" && win.active
+                            loops: Animation.Infinite
+                            onRunningChanged: if (!running) chipDot.opacity = 1
+                            NumberAnimation { from: 1; to: 0.35; duration: 700 }
+                            NumberAnimation { from: 0.35; to: 1; duration: 700 }
+                        }
+                    }
                     Text {
                         id: nameText
-                        anchors { fill: parent; leftMargin: FiliTheme.space2; rightMargin: FiliTheme.space2 }
+                        anchors { fill: parent; leftMargin: nameChip.dotShown ? FiliTheme.space2 + 6 + FiliTheme.space1 : FiliTheme.space2; rightMargin: FiliTheme.space2 }
                         verticalAlignment: Text.AlignVCenter
                         text: nameChip.label
                         elide: Text.ElideRight

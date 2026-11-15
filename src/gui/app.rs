@@ -66,6 +66,10 @@ pub mod qobject {
         /// A notification of the desktop (a long command ended while the window was not watched)
         #[qinvokable]
         fn notify(self: &Aeroport, title: &QString, body: &QString);
+        /// The same; a click on the bubble then runs `command` (signal command, as the bar's menu)
+        #[qinvokable]
+        #[cxx_name = "notifyThen"]
+        fn notify_then(self: &Aeroport, title: &QString, body: &QString, command: &QString);
         /// Keyboard shortcuts as JSON [{action, keys: [...]}]: preset and [keys] of fili-term.toml (gui/keys.rs)
         #[qinvokable]
         #[cxx_name = "keysJson"]
@@ -211,7 +215,9 @@ impl qobject::Aeroport {
     }
 
     fn settings_json(&self) -> QString {
-        QString::from(&super::settings::json())
+        let text = std::fs::read_to_string(super::theme::path()).unwrap_or_default();
+        super::agents::reload(&text);
+        QString::from(&super::settings::json_from(&text))
     }
 
     fn set_mode_policy(&self, kind: &QString, policy: &QString) {
@@ -335,6 +341,31 @@ impl qobject::Aeroport {
             .stderr(std::process::Stdio::null())
             .spawn()
             .map(|mut c| std::thread::spawn(move || c.wait()));
+    }
+
+    fn notify_then(&self, title: &QString, body: &QString, command: &QString) {
+        let qt = self.qt_thread();
+        let command = command.to_string();
+        let child = std::process::Command::new("notify-send")
+            .args(["--app-name=Aéroport", "--icon=fili-term", "--action=default=Show", "--"])
+            .arg(title.to_string())
+            .arg(body.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut c) = child {
+            std::thread::spawn(move || {
+                let mut out = String::new();
+                if let Some(mut o) = c.stdout.take() {
+                    let _ = std::io::Read::read_to_string(&mut o, &mut out);
+                }
+                let _ = c.wait();
+                if out.trim() == "default" {
+                    let _ = qt.queue(move |f| f.command(&QString::from(&command)));
+                }
+            });
+        }
     }
 
     fn duration(&self, ms: f64) -> QString {

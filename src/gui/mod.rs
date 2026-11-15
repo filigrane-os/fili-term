@@ -1,4 +1,5 @@
 //! The window process: one Qt Quick application for every fili-term window.
+pub mod agents;
 pub mod app;
 pub mod i18n;
 pub mod instance;

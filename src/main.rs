@@ -19,7 +19,8 @@ fn usage() -> i32 {
          fili-term send [--session ID] TEXT              types TEXT at the prompt, without Enter\n       \
          fili-term keymap [default|mac|tmux|none]         show or choose the keyboard shortcuts\n       \
          fili-term mode herdr                             herdr's tabs as tabs of the window, its agents in the sidebar\n       \
-         fili-term ctl [--pid PID] action NAME | actions\n\n\
+         fili-term ctl [--pid PID] action NAME | actions\n       \
+         fili-term report [--session ID] working|blocked|done|idle [--agent NAME]   an agent's state (hooks)\n\n\
          Opens a terminal window (Aéroport); sessions live in the daemon and survive their window.\n\
          --app-id ID: the window gets that Wayland app-id (for compositor rules), in a process of its own.\n\
          --tab: open a tab in the window that has the focus (a new window when none is open).\n\
@@ -48,6 +49,14 @@ fn main() {
             Err(e) => {
                 eprintln!("fili-term ctl: {e}");
                 1
+            }
+        },
+        // An agent's hook: its state on its pane (nothing outside Aéroport)
+        Some("report") => match ctl::report(&args[1..]) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("fili-term report: {e}");
+                2
             }
         },
         Some(verb @ ("blocks" | "output" | "send")) => match session_command(verb, &args[1..]) {

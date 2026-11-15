@@ -176,6 +176,10 @@ pub mod qobject {
         #[qproperty(i32, pass_mods, cxx_name = "passMods")]
         /// The program draws a whole screen on the main one (proto::NEW_PRIMARY_SCREEN): herdr's terminal attach
         #[qproperty(bool, primary_screen, cxx_name = "primaryScreen")]
+        /// The AI agent in the foreground ("claude", "codex"…, "" for none: see agents.rs) and its state ("working",
+        /// "blocked", "done", "idle"; "" without an agent), updated by agentTick
+        #[qproperty(QString, agent)]
+        #[qproperty(QString, agent_state, cxx_name = "agentState")]
         type TerminalView = super::TerminalViewRust;
 
         /// The shell ended (status), or the daemon went away (-1)
@@ -249,6 +253,15 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "editScrollback"]
         fn edit_scrollback(self: Pin<&mut TerminalView>);
+        /// Once a second from the window: the agent's state from its screen and output (`watched`: someone looks at
+        /// this pane)
+        #[qinvokable]
+        #[cxx_name = "agentTick"]
+        fn agent_tick(self: Pin<&mut TerminalView>, watched: bool);
+        /// A state reported by the agent's hooks (`fili-term report`), with its name when given
+        #[qinvokable]
+        #[cxx_name = "agentReport"]
+        fn agent_report(self: Pin<&mut TerminalView>, state: &QString, agent: &QString);
         /// Command line being run now ("" at a prompt), for the tab
         #[qinvokable]
         #[cxx_name = "runningCommand"]
@@ -675,6 +688,15 @@ pub struct Fonts {
 }
 
 pub struct TerminalViewRust {
+    agent: QString,
+    agent_state: QString,
+    tracker: super::agents::Tracker,
+    /// The agent named by a hook while the foreground process is not one of the known programs
+    reported_agent: String,
+    /// The foreground process when the hook reported (the name goes with it)
+    reported_pid: u32,
+    /// Last key, paste, resize or scroll sent: output right after it is no agent's work
+    quiet_at: std::cell::Cell<Option<Instant>>,
     menu_first: bool,
     pass_mods: i32,
     primary_screen: bool,
@@ -806,6 +828,12 @@ impl Default for TerminalViewRust {
             next_request: 1,
             trace: std::env::var_os("FILI_TERM_TRACE").is_some(),
             key_at: None,
+            agent: QString::default(),
+            agent_state: QString::default(),
+            tracker: Default::default(),
+            reported_agent: String::new(),
+            reported_pid: 0,
+            quiet_at: std::cell::Cell::new(None),
         }
     }
 }
@@ -1155,6 +1183,9 @@ fn set_clipboard_text(text: &str, mode: ClipboardMode) {
 
 impl qobject::TerminalView {
     fn send(&self, kind: u8, payload: &[u8]) {
+        if matches!(kind, proto::INPUT | proto::SCROLL | proto::RESIZE) {
+            self.quiet_at.set(Some(Instant::now()));
+        }
         if let Some(conn) = &self.conn {
             let _ = proto::write_msg(&mut &conn.0, kind, payload);
         }
@@ -1234,10 +1265,23 @@ impl qobject::TerminalView {
     fn handle(mut self: Pin<&mut Self>, msg: Message) {
         match msg {
             Message::Session(id) => self.set_session_id(id as i32),
-            Message::Frame(f) => self.apply_frame(f),
+            Message::Frame(f) => {
+                if !self.agent.is_empty() {
+                    let quiet = self.quiet_at.take();
+                    let mut r = self.as_mut().rust_mut();
+                    if let Some(q) = quiet {
+                        r.tracker.input(q);
+                    }
+                    r.tracker.output(Instant::now());
+                }
+                self.apply_frame(f)
+            }
             Message::Title(t) => self.set_title(QString::from(&t)),
             Message::Clipboard(t) => set_clipboard_text(&t, ClipboardMode::Clipboard),
-            Message::Bell => self.bell(),
+            Message::Bell => {
+                self.as_mut().rust_mut().tracker.bell(Instant::now());
+                self.bell()
+            }
             Message::Block(id, info) => {
                 let on_screen = self.shown_blocks.iter().any(|b| b.id == id);
                 let was_running = self.block_info.get(&id).is_some_and(|b| b.state == 1);
@@ -1270,6 +1314,16 @@ impl qobject::TerminalView {
             }
             Message::Foreground(pid, name) => {
                 self.as_mut().rust_mut().foreground_pid = pid;
+                let found = super::agents::detect(pid, &name).unwrap_or_default();
+                if self.reported_pid != pid {
+                    self.as_mut().rust_mut().reported_agent.clear();
+                }
+                let agent = if found.is_empty() { self.reported_agent.clone() } else { found };
+                if self.agent.to_string() != agent {
+                    self.as_mut().rust_mut().tracker.reset();
+                    self.as_mut().set_agent(QString::from(&agent));
+                    self.as_mut().set_agent_state(QString::from(if agent.is_empty() { "" } else { "idle" }));
+                }
                 if self.foreground.to_string() != name {
                     self.set_foreground(QString::from(&name));
                 }
@@ -2445,6 +2499,58 @@ impl qobject::TerminalView {
         proto::put_i32(&mut m, i32::MAX / 2);
         proto::put_u16(&mut m, u16::MAX);
         self.send(proto::TEXT_LINES, &m);
+    }
+
+    /// The last non-empty rows of the screen as text (only when the view shows the bottom)
+    fn bottom_text(&self, rows: usize) -> Option<String> {
+        if self.scroll_offset != 0 || self.cols == 0 {
+            return None;
+        }
+        let mut out: Vec<String> = Vec::new();
+        for r in (0..self.rows).rev() {
+            let line: String = self.cells.get(r * self.cols..(r + 1) * self.cols)?.iter().map(|c| c.c).collect();
+            let line = line.trim_end().to_string();
+            if !line.is_empty() {
+                out.push(line);
+                if out.len() >= rows {
+                    break;
+                }
+            }
+        }
+        out.reverse();
+        Some(out.join("\n"))
+    }
+
+    fn agent_tick(mut self: Pin<&mut Self>, watched: bool) {
+        if self.agent.is_empty() {
+            return;
+        }
+        let screen = self.bottom_text(20).and_then(|b| super::agents::screen_state(&self.title.to_string(), &b));
+        let quiet = self.quiet_at.take();
+        let state = {
+            let mut r = self.as_mut().rust_mut();
+            if let Some(q) = quiet {
+                r.tracker.input(q);
+            }
+            r.tracker.tick(Instant::now(), screen, watched)
+        };
+        if self.agent_state.to_string() != state.as_str() {
+            self.as_mut().set_agent_state(QString::from(state.as_str()));
+        }
+    }
+
+    fn agent_report(mut self: Pin<&mut Self>, state: &QString, agent: &QString) {
+        let Some(s) = super::agents::State::parse(&state.to_string()) else { return };
+        let name = agent.to_string();
+        if self.agent.is_empty() || (!name.is_empty() && self.agent.to_string() != name) {
+            let name = if name.is_empty() { "agent".to_string() } else { name };
+            let pid = self.foreground_pid;
+            let mut r = self.as_mut().rust_mut();
+            r.reported_agent = name.clone();
+            r.reported_pid = pid;
+            self.as_mut().set_agent(QString::from(&name));
+        }
+        self.as_mut().rust_mut().tracker.report(s, Instant::now());
     }
 
     fn running_command(&self) -> QString {

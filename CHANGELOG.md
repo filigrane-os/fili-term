@@ -92,6 +92,13 @@
   screen of the pane go to a private file (`$XDG_RUNTIME_DIR/fili-term/scrollback-<session>.txt`), opened with
   $VISUAL / $EDITOR (else nvim) in a pane below, zoomed, closed when the editor quits; in a herdr tab, herdr's own
   edit_scrollback.
+- Agents in every pane: the agent in the foreground (claude, codex, opencode…, also under node, bun or python;
+  `[agents] programs`) and its state, working, waiting for you, done or idle, read from what it shows as herdr does
+  (the title it sets, the bottom of the screen, a bell, output that keeps coming; src/gui/agents.rs). Spinner, bell or
+  check on the tab, a dot on the pane's name chip (the agent's name when the pane has none), a notification when it
+  waits or finished out of sight (a click shows the pane). Next Agent (action next-agent, Ctrl+Alt+A, tmux prefix+a).
+  `fili-term report working|blocked|done|idle [--agent NAME]` for agents' hooks (Claude Code's in the README), through
+  the ctl sockets: no change to the daemon.
 
 ## v2.0.0 (2026-11-12)
 

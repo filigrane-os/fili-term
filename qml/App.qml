@@ -36,6 +36,16 @@ QtObject {
     property Connections commands: Connections {
         target: Aeroport
         function onCommand(name) {
+            // An agent's hook (fili-term report): the window holding that session; a click on an agent's notification
+            const parts = name.split("\t");
+            if (parts[0] === "report") {
+                root.windows.some(x => x.agentReport(parseInt(parts[1]), parts[2], parts[3] || ""));
+                return;
+            }
+            if (parts[0] === "show-session") {
+                root.windows.some(x => x.showSession(parseInt(parts[1])));
+                return;
+            }
             const w = root.windows.find(x => x.active) || root.windows[root.windows.length - 1];
             if (w)
                 w.run(name);

@@ -92,10 +92,6 @@ pub fn set_mode_policy(kind: &str, policy: &str) -> std::io::Result<()> {
     std::fs::write(&path, with_value(&text, "modes", kind, policy))
 }
 
-pub fn json() -> String {
-    json_from(&std::fs::read_to_string(super::theme::path()).unwrap_or_default())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
