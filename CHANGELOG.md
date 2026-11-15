@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (V3)
+## v3.0.0 (2026-11-15)
 
 ### V3, part A
 

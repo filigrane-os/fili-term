@@ -209,6 +209,20 @@ terminal font is `mono`, its 16 colours `palette` (one list per mode); text, bac
 
 Full-screen repaint: ≈ 4.5 ms (software). Hidden tabs drop their image.
 
+## Weight per release
+
+Measured in use on the same machine (i5-1038NG7, niri, scale 1.75): PSS from `/proc/PID/smaps_rollup`, CPU over 10 s of
+an idle window (a shell at its prompt, command journal on). The window is the Qt process (all windows), the daemon holds
+the sessions.
+
+| version | window (PSS) | daemon (PSS) | CPU idle (window / daemon) | notes |
+|---|---|---|---|---|
+| v2.0.0 (V0 figures above) | 41 MB | 7 MB | not measured | 1 terminal |
+| v3.0.0 | 43 MB | 16 MB | 0.1 % / 0.1 % | 1 session open for 20 minutes, the daemon's blocks and history included |
+
+The window is within 2 MB of v2.0.0 with panes, workspaces, agents, the journal and the header added. The daemon grew
+by 9 MB (the blocks and their times are kept for each session, and this one had lived for 20 minutes): to watch.
+
 ## Not done yet
 
 Box-drawing characters drawn by hand, a sidebar of the daemon's sessions, the nvim and tmux modes.
