@@ -418,7 +418,7 @@ Window {
             entries.push({ separator: true });
             if (item.group && !item.linked)
                 entries.push({ id: "close-group", label: Aeroport.tr("Close Group…") });
-            entries.push({ id: "close-workspace", label: Aeroport.tr("Close Workspace…") });
+            entries.push({ id: "close-workspace", label: Aeroport.tr("Close Workspace") });
         } else if (section === "panes" || section === "agents") {
             if (section === "agents")
                 entries = [{ id: "rename-agent", label: Aeroport.tr("Rename Agent…") }, { id: "show-agent", label: Aeroport.tr("Show Agent") }, { separator: true }];
@@ -450,7 +450,7 @@ Window {
         else if (id === "open-worktree") modeAct({ op: "worktrees", id: it.id });
         else if (id === "remove-worktree") confirm(Aeroport.tr("Delete the checkout of %1?").replace("%1", it.label), Aeroport.tr("Delete"), () => modeAct({ op: "remove-worktree", id: it.id }));
         else if (id === "close-group") confirm(Aeroport.tr("Close %1 and its worktrees?").replace("%1", it.label), Aeroport.tr("Close"), () => modeAct({ op: "close", section: "workspaces", id: it.id, group: true }));
-        else if (id === "close-workspace") confirm(Aeroport.tr("Close the workspace %1?").replace("%1", it.label), Aeroport.tr("Close"), () => modeAct({ op: "close", section: "workspaces", id: it.id }));
+        else if (id === "close-workspace") modeAct({ op: "close", section: "workspaces", id: it.id });
         else if (id === "rename-agent") ask(Aeroport.tr("Name of the agent"), it.label, v => modeAct({ op: "rename", section: "agents", id: it.id, label: v }));
         else if (id === "show-agent") modeAct({ op: "select", section: "agents", id: it.id });
         else if (id === "rename-pane") ask(Aeroport.tr("Name of the pane"), it.label, v => modeAct({ op: "rename", section: "panes", id: it.id, label: v }));
