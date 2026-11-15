@@ -107,6 +107,17 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "shortPath"]
         fn short_path(self: &Aeroport, path: &QString) -> QString;
+        /// The windows saved by the last run (JSON list, "[]" when none) and the ids of the sessions the daemon still has
+        #[qinvokable]
+        #[cxx_name = "savedWindows"]
+        fn saved_windows(self: &Aeroport) -> QString;
+        #[qinvokable]
+        #[cxx_name = "liveSessions"]
+        fn live_sessions(self: &Aeroport) -> QString;
+        /// Keep the layout of the open windows (JSON list) for the next run
+        #[qinvokable]
+        #[cxx_name = "saveWindows"]
+        fn save_windows(self: &Aeroport, json: &QString);
         /// The project of a folder: the nearest folder up that holds `.git`, else the folder itself ("" gives home)
         #[qinvokable]
         #[cxx_name = "projectRoot"]
@@ -138,6 +149,11 @@ fn home() -> String {
 fn state_dir() -> PathBuf {
     let state = env::var("XDG_STATE_HOME").unwrap_or_else(|_| format!("{}/.local/state", home()));
     PathBuf::from(state).join("filigrane")
+}
+
+/// The layout of the windows kept between runs
+fn windows_file() -> PathBuf {
+    state_dir().join("term/windows.json")
 }
 
 fn ui_file() -> PathBuf {
@@ -410,6 +426,36 @@ impl qobject::Aeroport {
         let json = |s: &str| serde_json::Value::from(s).to_string();
         let list: Vec<String> = rows.iter().map(|[a, b]| format!("[{},{}]", json(a), json(b))).collect();
         QString::from(&format!("[{}]", list.join(",")))
+    }
+
+    fn saved_windows(&self) -> QString {
+        QString::from(&std::fs::read_to_string(windows_file()).unwrap_or_else(|_| "[]".into()))
+    }
+
+    fn live_sessions(&self) -> QString {
+        let mut ids: Vec<String> = Vec::new();
+        if let Ok(mut s) = std::os::unix::net::UnixStream::connect(crate::proto::daemon_socket()) {
+            let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+            if crate::proto::write_msg(&mut s, crate::proto::LIST, &[]).is_ok() {
+                if let Ok((_, text)) = crate::proto::read_msg(&mut s) {
+                    ids = String::from_utf8_lossy(&text).lines().filter_map(|l| l.split('\t').next()).filter(|i| i.parse::<u32>().is_ok()).map(String::from).collect();
+                }
+            }
+        }
+        QString::from(&format!("[{}]", ids.join(",")))
+    }
+
+    fn save_windows(&self, json: &QString) {
+        let path = windows_file();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // Whole file or nothing: a window process killed in the middle must not leave half a file
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json.to_string()).is_ok() {
+            let _ = std::fs::set_permissions(&tmp, std::os::unix::fs::PermissionsExt::from_mode(0o600));
+            let _ = std::fs::rename(&tmp, &path);
+        }
     }
 
     fn project_root(&self, path: &QString) -> QString {

@@ -55,6 +55,28 @@ Item {
         layout();
         return v;
     }
+    // The layout to keep (windows.json): leaves {session, cwd, name, active}, splits {dir, ratio, a, b}
+    function describe(n) {
+        if (n.view)
+            return { session: n.view.sessionId, cwd: n.view.cwd, name: n.view.paneName || "", active: n.view === active };
+        return { dir: n.dir, ratio: n.ratio, a: describe(n.a), b: describe(n.b) };
+    }
+    // Bring a saved layout back: a pane attaches to its session when the daemon still has it (`live`: ids), else it is a
+    // fresh shell in the saved folder
+    function restoreTree(saved, live) {
+        const build = n => {
+            if (n.dir)
+                return { dir: n.dir === "down" ? "down" : "right", ratio: Math.max(0.1, Math.min(0.9, n.ratio || 0.5)), a: build(n.a), b: build(n.b) };
+            const v = newView({ sessionId: live.indexOf(n.session) >= 0 ? n.session : 0, cwd: n.cwd || "", command: [], paneName: n.name || "" });
+            if (n.active)
+                active = v;
+            return { view: v };
+        };
+        root = build(saved);
+        if (!active)
+            active = firstLeaf(root);
+        layout();
+    }
     function closeAll() {
         for (const v of leaves)
             v.closeSession();

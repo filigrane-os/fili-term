@@ -1165,9 +1165,47 @@ Window {
         }
     }
 
+    // The layout of this window as JSON for the next run (windows.json), "" when it is not worth keeping: a window that
+    // runs a command (a script's) or has only herdr's tabs (herdr restores itself; only the mode is noted)
+    function layoutJson() {
+        if (command.length > 0)
+            return "";
+        const out = [];
+        let shown = 0;
+        for (const t of tabs) {
+            if (t.modeTab !== "" || !t.root)
+                continue;
+            if (t === tab)
+                shown = out.length;
+            out.push({ workspace: t.workspace, tree: t.describe(t.root) });
+        }
+        const mode = modeState !== null && modeClient.host === "" ? modeClient.kind : "";
+        if (out.length === 0 && mode === "")
+            return "";
+        return JSON.stringify({ current: shown, names: workspaceNames, mode: mode, tabs: out });
+    }
+    // A window of the last run (the JSON of layoutJson) and the sessions the daemon still has
+    property string restore: ""
+    property var restoreLive: []
+    function restoreLayout() {
+        let saved = {};
+        try { saved = JSON.parse(restore) } catch (e) { saved = {} }
+        workspaceNames = saved.names || {};
+        for (const d of saved.tabs || []) {
+            const t = newTab({ workspace: d.workspace || Aeroport.projectRoot("") });
+            t.restoreTree(d.tree, restoreLive);
+            tabs = tabs.concat([t]);
+        }
+        if (tabs.length > 0)
+            select(Math.max(0, Math.min(saved.current || 0, tabs.length - 1)));
+        if (saved.mode)
+            startMode(saved.mode, null);
+        else if (tabs.length === 0)
+            addTab(0, cwd, []);
+    }
     // `fili-term mode herdr`: the window opens on herdr's tabs only
     property string initialMode: ""
-    Component.onCompleted: initialMode !== "" ? startMode(initialMode, null) : addTab(attachId, cwd, command)
+    Component.onCompleted: restore !== "" ? restoreLayout() : initialMode !== "" ? startMode(initialMode, null) : addTab(attachId, cwd, command)
     signal closed()
     onClosing: {
         for (const t of tabs)

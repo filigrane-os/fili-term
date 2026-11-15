@@ -106,6 +106,12 @@
   the Agents (grouped by workspace or by priority); a click shows one, + asks for a folder (the project's workspace if
   it exists), right click renames or closes a workspace (a running command is confirmed). Next / Previous Workspace
   (Ctrl+Alt+PgDown / PgUp, tmux prefix+) and prefix+( ), New Workspace… (menu).
+- The layout comes back: the windows (workspaces, tabs, splits and ratios, pane names, the tab shown) are written to
+  `~/.local/state/filigrane/term/windows.json` (0600) whenever they change. A bare `fili-term` with no window open
+  brings them back: panes attach to the sessions the daemon still has, else they are fresh shells in the saved
+  folders. A window closed on purpose is forgotten; those lost with the process (logout, crash) stay. herdr tabs are
+  not saved (herdr restores itself), only that its mode was on; windows that run a command (scripts) and windows with
+  their own app-id are not saved. `restore = "always" | "never"` (top of fili-term.toml), `fili-term --new` skips it once.
 
 ## v2.0.0 (2026-11-12)
 

@@ -13,7 +13,7 @@ use std::os::unix::net::UnixStream;
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: fili-term [--app-id ID] [-T TITLE] [--hold] [--tab] [--no-header] [--no-footer] [-e COMMAND [ARGS…]] [--attach ID]\n       fili-term list\n       \
+        "usage: fili-term [--new] [--app-id ID] [-T TITLE] [--hold] [--tab] [--no-header] [--no-footer] [-e COMMAND [ARGS…]] [--attach ID]\n       fili-term list\n       \
          fili-term blocks [--session ID]                 commands of a session (JSON)\n       \
          fili-term output [--session ID] [--all] [BLOCK] output of a command (default: the last one)\n       \
          fili-term send [--session ID] TEXT              types TEXT at the prompt, without Enter\n       \
@@ -24,6 +24,7 @@ fn usage() -> i32 {
          Opens a terminal window (Aéroport); sessions live in the daemon and survive their window.\n\
          --app-id ID: the window gets that Wayland app-id (for compositor rules), in a process of its own.\n\
          --tab: open a tab in the window that has the focus (a new window when none is open).\n\
+         --new: open a new window without bringing back the windows of the last run (restore in fili-term.toml).\n\
          --hold: keep the tab open after the command exits, to read its output.\n\
          The session defaults to $FILI_TERM_SESSION (set in each Aéroport shell)."
     );
@@ -197,9 +198,12 @@ fn open(args: &[String]) -> i32 {
     let mut hold = false;
     let mut tab = false;
     let mut mode = String::new();
+    // Nothing asked: the windows of the last run come back (`--new` skips that once)
+    let plain = args.is_empty();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--new" => {}
             "-e" | "--" => {
                 command = it.by_ref().cloned().collect();
             }
@@ -224,7 +228,7 @@ fn open(args: &[String]) -> i32 {
     // Request line for the window process: "open\t<attach>\t<cwd>\t<flags>\t<title>\t<argv…>" (tabs never appear in a cwd we accept)
     let clean = |t: &str| t.replace(['\t', '\n'], " ");
     let mode = (!mode.is_empty()).then(|| format!("mode={mode}"));
-    let flags: Vec<&str> = [hold.then_some("hold"), tab.then_some("tab"), mode.as_deref()].into_iter().flatten().collect();
+    let flags: Vec<&str> = [hold.then_some("hold"), tab.then_some("tab"), plain.then_some("plain"), mode.as_deref()].into_iter().flatten().collect();
     let mut request = format!("open\t{attach}\t{cwd}\t{}\t{}", flags.join(","), clean(&title));
     for a in &command {
         request.push('\t');

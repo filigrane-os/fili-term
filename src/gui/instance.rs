@@ -34,11 +34,15 @@ pub mod qobject {
         /// Open a window on a session (attach > 0) or on a new one (cwd, command)
         #[qsignal]
         #[cxx_name = "openRequested"]
-        fn open_requested(self: Pin<&mut Instance>, attach: i32, cwd: QString, hold: bool, tab: bool, title: QString, command: QStringList, mode: QString);
+        fn open_requested(self: Pin<&mut Instance>, attach: i32, cwd: QString, hold: bool, tab: bool, title: QString, command: QStringList, mode: QString, plain: bool);
 
         /// Called by Main.qml once loaded: opens the first window and starts listening
         #[qinvokable]
         fn start(self: Pin<&mut Instance>);
+
+        /// A window with its own app-id: this process neither saves nor restores the layout of the windows
+        #[qinvokable]
+        fn standalone(self: &Instance) -> bool;
 
         #[qinvokable]
         #[cxx_name = "newWindow"]
@@ -54,7 +58,7 @@ pub struct InstanceRust {
 }
 
 impl qobject::Instance {
-    /// "open\t<attach id>\t<cwd>\t<flags>\t<title>\t<argv…>", flags: hold, tab, mode=KIND
+    /// "open\t<attach id>\t<cwd>\t<flags>\t<title>\t<argv…>", flags: hold, tab, plain, mode=KIND
     fn handle(self: Pin<&mut Self>, request: &str) {
         let mut parts = request.split('\t');
         if parts.next() != Some("open") {
@@ -71,7 +75,9 @@ impl qobject::Instance {
         for a in parts {
             command.append(QString::from(a));
         }
-        self.open_requested(attach, cwd, hold, tab, title, command, mode);
+        // A bare `fili-term` (no argument): the windows of the last run come back when none is open
+        let plain = flags.split(',').any(|f| f == "plain");
+        self.open_requested(attach, cwd, hold, tab, title, command, mode, plain);
     }
 
     fn start(mut self: Pin<&mut Self>) {
@@ -105,8 +111,12 @@ impl qobject::Instance {
         }
     }
 
+    fn standalone(&self) -> bool {
+        STANDALONE.load(Ordering::Relaxed)
+    }
+
     fn new_window(self: Pin<&mut Self>, cwd: &QString) {
         let cwd = if cwd.is_empty() { std::env::var("HOME").unwrap_or_default() } else { cwd.to_string() };
-        self.open_requested(0, QString::from(&cwd), false, false, QString::default(), QStringList::default(), QString::default());
+        self.open_requested(0, QString::from(&cwd), false, false, QString::default(), QStringList::default(), QString::default(), false);
     }
 }

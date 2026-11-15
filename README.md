@@ -99,6 +99,11 @@ Show Sidebar, Ctrl+Shift+B, hides it): Workspaces with their tab count and the w
 grouped by workspace or by priority. Ctrl+Alt+PgDown / PgUp change workspace, **+** (or Tabs > New Workspace…) asks for
 a folder, right click renames or closes a workspace.
 
+The layout is kept in `~/.local/state/filigrane/term/windows.json` and comes back at the next bare `fili-term` when no
+window is open (after a logout, a crash, a restart of the window process): the same workspaces, tabs, splits and pane
+names, each pane on its old session when the daemon still has it, else a new shell in its old folder. Closing a window
+on purpose forgets it. `restore = "never"` in fili-term.toml turns this off, `fili-term --new` skips it once.
+
 ## Integrated modes
 
 When the program runs in a tab: `herdr` typed in a terminal is integrated at once (the daemon reads the foreground
