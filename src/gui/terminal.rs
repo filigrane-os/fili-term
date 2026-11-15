@@ -191,6 +191,10 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "contextRequested"]
         fn context_requested(self: Pin<&mut TerminalView>, x: f64, y: f64);
+        /// The history and screen were written to a file (editScrollback): the editor's command line, a JSON list
+        #[qsignal]
+        #[cxx_name = "scrollbackReady"]
+        fn scrollback_ready(self: Pin<&mut TerminalView>, argv: &QString);
 
         #[qinvokable]
         fn copy(self: Pin<&mut TerminalView>);
@@ -240,6 +244,11 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "editBlock"]
         fn edit_block(self: Pin<&mut TerminalView>, id: i32);
+        /// Write the whole history and the screen to a private file, then signal scrollbackReady with the editor's
+        /// command line on it (the window opens it in a pane)
+        #[qinvokable]
+        #[cxx_name = "editScrollback"]
+        fn edit_scrollback(self: Pin<&mut TerminalView>);
         /// Command line being run now ("" at a prompt), for the tab
         #[qinvokable]
         #[cxx_name = "runningCommand"]
@@ -631,6 +640,8 @@ enum TextUse {
     Publish,
     /// The output of a block, to edit
     Edit(u32),
+    /// The whole history and screen, to edit in a pane
+    Scrollback,
 }
 
 enum Message {
@@ -1070,6 +1081,33 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Write a block's output to a file and open it in the default editor, in a tab of the window in use
+/// The user's editor ($VISUAL, $EDITOR, else nvim) as words, the file last
+fn editor_argv(file: &std::path::Path) -> Vec<String> {
+    let editor = ["VISUAL", "EDITOR"]
+        .iter()
+        .find_map(|v| std::env::var(v).ok().filter(|e| !e.trim().is_empty()))
+        .unwrap_or_else(|| "nvim".to_string());
+    let mut words: Vec<String> = editor.split_whitespace().map(str::to_string).collect();
+    words.push(file.to_string_lossy().into_owned());
+    words
+}
+
+/// Write a terminal's history and screen to `scrollback-<session>.txt` (0600, replaced at each use, in the runtime
+/// directory) and give the editor's command line on it as a JSON list
+fn scrollback_file(session: i32, text: &str) -> Option<String> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let dir = proto::runtime_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    let file = dir.join(format!("scrollback-{}.txt", session.max(0)));
+    let _ = std::fs::remove_file(&file);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&file).ok()?;
+    let body: String = text.lines().map(str::trim_end).collect::<Vec<_>>().join("\n");
+    f.write_all(body.trim_end().as_bytes()).ok()?;
+    f.write_all(b"\n").ok()?;
+    let words: Vec<String> = editor_argv(&file).iter().map(|w| json_string(w)).collect();
+    Some(format!("[{}]", words.join(",")))
+}
+
 fn edit_text(id: u32, text: &str) {
     let dir = proto::runtime_dir().join("edit");
     if std::fs::create_dir_all(&dir).is_err() {
@@ -1079,12 +1117,7 @@ fn edit_text(id: u32, text: &str) {
     if std::fs::write(&file, text).is_err() {
         return;
     }
-    let editor = ["VISUAL", "EDITOR"]
-        .iter()
-        .find_map(|v| std::env::var(v).ok().filter(|e| !e.trim().is_empty()))
-        .unwrap_or_else(|| "nvim".to_string());
-    let mut words: Vec<String> = editor.split_whitespace().map(str::to_string).collect();
-    words.push(file.to_string_lossy().into_owned());
+    let words = editor_argv(&file);
     let exe = std::env::current_exe().unwrap_or_else(|_| "fili-term".into());
     let _ = std::process::Command::new(exe)
         .args(["--tab", "-T", "Output", "-e"])
@@ -1252,6 +1285,11 @@ impl qobject::TerminalView {
                     Some(TextUse::Clipboard) if !text.is_empty() => set_clipboard_text(&text, ClipboardMode::Clipboard),
                     Some(TextUse::Publish) if !text.is_empty() => publish_selection(&text),
                     Some(TextUse::Edit(id)) => edit_text(id, &text),
+                    Some(TextUse::Scrollback) => {
+                        if let Some(argv) = scrollback_file(self.session_id, &text) {
+                            self.as_mut().scrollback_ready(&QString::from(&argv));
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1753,7 +1791,7 @@ impl qobject::TerminalView {
             match how {
                 TextUse::Publish => publish_selection(&text),
                 TextUse::Clipboard => set_clipboard_text(&text, ClipboardMode::Clipboard),
-                TextUse::Edit(_) => {}
+                TextUse::Edit(_) | TextUse::Scrollback => {}
             }
             return;
         }
@@ -2389,6 +2427,24 @@ impl qobject::TerminalView {
         proto::put_u32(&mut b, id as u32);
         b.push(0);
         self.send(proto::TEXT_OF, &b);
+    }
+
+    fn edit_scrollback(mut self: Pin<&mut Self>) {
+        let request = {
+            let mut r = self.as_mut().rust_mut();
+            let request = r.next_request;
+            r.next_request = request.wrapping_add(1).max(1);
+            r.requests.insert(request, TextUse::Scrollback);
+            request
+        };
+        // From the oldest line of the history to the end of the screen (the daemon clamps to what it has)
+        let mut m = Vec::new();
+        proto::put_u32(&mut m, request);
+        proto::put_i32(&mut m, i32::MIN / 2);
+        proto::put_u16(&mut m, 0);
+        proto::put_i32(&mut m, i32::MAX / 2);
+        proto::put_u16(&mut m, u16::MAX);
+        self.send(proto::TEXT_LINES, &m);
     }
 
     fn running_command(&self) -> QString {

@@ -35,6 +35,11 @@ window, Ctrl+Shift+Q close window, Ctrl+Shift+C/V (Ctrl+Insert, Shift+Insert, Co
 Shift+PgUp/PgDn history, Ctrl+plus/minus/0 font size. Shift+mouse selects even when a program grabs the mouse. Ctrl+Shift+F searches the history (Enter / Shift+Enter next and
 previous match, Escape closes), Ctrl+click opens an address.
 
+Panes: Ctrl+Shift+D / E split right / down, Ctrl+Alt+arrows move between panes, Ctrl+Alt+Shift+arrows move a divider,
+Ctrl+Alt+R resize mode (arrows or H J K L, Esc when done), Ctrl+Shift+Return zoom. Rename Pane… (right click) puts a
+name at the pane's top right. Ctrl+Alt+Shift+E opens the pane's whole history in $VISUAL / $EDITOR (else nvim), in a
+zoomed pane that closes with the editor.
+
 `fili-term [--app-id ID] [-T TITLE] [--hold] [--tab] [-e COMMAND…]` is the command line for scripts: `--app-id` gives the
 window its own Wayland app-id (in a process of its own), `--hold` keeps the tab after the command ended, `--tab` adds
 a tab to the window in use. A notification tells when a command of 10 s or more ends in a terminal nobody watches

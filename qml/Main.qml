@@ -196,6 +196,49 @@ Window {
         }
         t.split(dir, { cwd: v.cwd, command: [] });
     }
+    // Name the active pane (shown at its top right when the tab has several); herdr names its own panes
+    function renamePane() {
+        const t = tab, v = view;
+        if (!t || !v)
+            return;
+        const p = v.mapToItem(null, FiliTheme.space4, FiliTheme.space4);
+        const hp = herdrPane(t);
+        if (hp) {
+            menuTarget = { section: "panes", item: hp, x: p.x, y: p.y };
+            herdrMenuAction("rename-pane");
+        } else if (t.modeTab === "")
+            namePrompt.open(p.x, p.y, 240, Aeroport.tr("Name of the pane"), v.paneName, name => { v.paneName = name.trim() });
+    }
+    // Resize mode: arrows or H J K L move the active pane's dividers until Esc or Enter (herdr's own in its tabs)
+    function resizeMode() {
+        if (tab && (tab.modeTab !== "" || tab.leaves.length > 1))
+            resizing = true;
+    }
+    // The history of the active pane in the editor, in a pane below, zoomed, closed when the editor quits; in a tab
+    // of herdr, herdr's own edit_scrollback
+    function editScrollback() {
+        const t = tab, v = view;
+        if (!t || !v)
+            return;
+        if (t.modeTab !== "") {
+            const hp = herdrPane(t);
+            if (hp)
+                modeAct({ op: "edit-scrollback", id: hp.id });
+            return;
+        }
+        v.editScrollback();
+    }
+    function openScrollback(v, argv) {
+        const t = v ? v.paneTab : null;
+        const words = JSON.parse(argv);
+        if (!t || t.modeTab !== "" || !words.length)
+            return;
+        if (t.active !== v)
+            t.setActive(v);
+        const e = t.split("down", { cwd: v.cwd, command: words, paneName: Aeroport.tr("History") });
+        if (e && !t.zoomed)
+            t.toggleZoom();
+    }
     // Menu of a pane (right click, or Shift+right click when the program takes the mouse): copy and paste, the panes,
     // and in a tab of herdr the entries of herdr's pane menu
     function paneMenu(v, x, y) {
@@ -208,6 +251,9 @@ Window {
         const hp = herdrPane(t);
         if (hp)
             entries = entries.concat([{ id: "rename-pane", label: Aeroport.tr("Rename Pane…") }, { id: "clear-pane-name", label: Aeroport.tr("Clear Pane Name") }, { separator: true }]);
+        else if (t.modeTab === "")
+            entries = entries.concat([{ id: "pane:rename-pane", label: Aeroport.tr("Rename Pane…"), hint: keyHint("rename-pane") },
+                                      { id: "pane:clear-name", label: Aeroport.tr("Clear Pane Name"), enabled: v.paneName !== "" }, { separator: true }]);
         {
             const several = t.leaves.length > 1;
             const swaps = ["left", "right", "up", "down"].map(d => ({ id: "pane:swap-" + d, label: Aeroport.tr(swapLabels[d]), enabled: t.neighbour(v, d) !== null }));
@@ -218,6 +264,8 @@ Window {
                 { id: "pane:swap", label: Aeroport.tr("Swap Pane"), enabled: several, children: swaps.filter(x => x.enabled) },
                 { id: "pane:move", label: Aeroport.tr("Move Pane To"), enabled: moveTargets(t).length > 0, children: moveTargets(t) },
                 { id: "pane:zoom", label: t.zoomed ? Aeroport.tr("Show All Panes") : Aeroport.tr("Zoom Pane"), hint: keyHint("zoom-pane"), enabled: several },
+                { id: "pane:resize-mode", label: Aeroport.tr("Resize Pane"), hint: keyHint("resize-mode"), enabled: several },
+                { id: "pane:edit-scrollback", label: Aeroport.tr("Open History in the Editor"), hint: keyHint("edit-scrollback") },
                 { separator: true },
                 { id: "pane:close", label: Aeroport.tr("Close Pane"), hint: keyHint("close-pane") }
             ]);
@@ -309,6 +357,8 @@ Window {
             run("zoom-pane");
         } else if (name === "close") {
             run("close-pane");
+        } else if (name === "clear-name") {
+            if (view) view.paneName = "";
         } else {
             run(name);
         }
@@ -789,7 +839,8 @@ Window {
         onTriggered: if (win.active && win.view) Aeroport.publishContext(win.view.contextJson(), 0)
     }
     onActiveChanged: contextTimer.restart()
-    onViewChanged: { contextTimer.restart(); if (searching && view !== searchView) closeSearch() }
+    // Another pane takes the keyboard: the resize mode ends (its keys would be taken from that pane's program)
+    onViewChanged: { contextTimer.restart(); resizing = false; if (searching && view !== searchView) closeSearch() }
     Connections {
         target: win.view
         function onBlocksRevisionChanged() { contextTimer.restart() }
@@ -837,6 +888,9 @@ Window {
         else if (name === "split-down") win.split("down");
         else if (name === "zoom-pane") win.paneAction("zoom");
         else if (name === "context-menu") { if (v) win.paneMenu(v, FiliTheme.space4, FiliTheme.space4) }
+        else if (name === "rename-pane") win.renamePane();
+        else if (name === "resize-mode") win.resizeMode();
+        else if (name === "edit-scrollback") win.editScrollback();
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
         else if (name.startsWith("tab-")) { const n = parseInt(name.slice(4)); win.select(n === 9 ? win.tabs.length - 1 : n - 1) }
@@ -893,6 +947,9 @@ Window {
             // program stays in the foreground (a launcher before it, `env`, does not count)
             property string declined: ""
             property bool declinedSeen: false
+            // Name given to the pane (Rename Pane…), shown at its top right when the tab has several
+            property string paneName: ""
+            onScrollbackReady: argv => win.openScrollback(term, argv)
             onForegroundChanged: {
                 const kind = win.modeKind(foreground);
                 if (kind !== "" && kind === declined)
@@ -1297,7 +1354,9 @@ Window {
                 // it steps aside while the pointer is over it
                 Rectangle {
                     id: nameChip
-                    visible: pane.info !== null && pane.info.named === true && win.tab !== null && win.tab.leaves.length > 1 && !win.tab.zoomed
+                    // Its name: herdr's for a pane of herdr, the one given here (Rename Pane…) for the others
+                readonly property string label: pane.info ? (pane.info.named === true ? pane.info.label : "") : pane.v ? pane.v.paneName : ""
+                visible: label !== "" && win.tab !== null && win.tab.leaves.length > 1 && !win.tab.zoomed
                     anchors { top: parent.top; right: parent.right; topMargin: FiliTheme.space1; rightMargin: FiliTheme.space3 }
                     z: 2
                     width: Math.min(nameText.implicitWidth + 2 * FiliTheme.space2, parent.width / 2)
@@ -1312,7 +1371,7 @@ Window {
                         id: nameText
                         anchors { fill: parent; leftMargin: FiliTheme.space2; rightMargin: FiliTheme.space2 }
                         verticalAlignment: Text.AlignVCenter
-                        text: pane.info ? pane.info.label : ""
+                        text: nameChip.label
                         elide: Text.ElideRight
                         font.family: FiliTheme.font
                         font.pixelSize: FiliTheme.sizeSmall

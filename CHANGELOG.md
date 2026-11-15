@@ -83,6 +83,16 @@
   divider sets herdr's ratio, the pane clicked becomes herdr's focused pane. herdr's keys prefix+h/j/k/l, Tab, v, -,
   x, z and resize_pane_* follow. The "Panes" section of the sidebar is gone.
 
+### V3, part C
+
+- Panes of every tab (not only herdr's): Rename Pane… and Clear Pane Name in the pane menu (action rename-pane, no
+  default key), the name shown at the pane's top right when the tab has several panes. Resize Pane (action
+  resize-mode, Ctrl+Alt+R, tmux prefix+r): arrows or H J K L move the dividers until Esc or Enter, as herdr's resize
+  mode. Open History in the Editor (action edit-scrollback, Ctrl+Alt+Shift+E, tmux prefix+e): the whole history and
+  screen of the pane go to a private file (`$XDG_RUNTIME_DIR/fili-term/scrollback-<session>.txt`), opened with
+  $VISUAL / $EDITOR (else nvim) in a pane below, zoomed, closed when the editor quits; in a herdr tab, herdr's own
+  edit_scrollback.
+
 ## v2.0.0 (2026-11-12)
 
 - Command blocks: shell integration loaded by the daemon (zsh, bash), OSC 133 marks kept in the grid; hairline,
