@@ -10,6 +10,8 @@ Rectangle {
     id: side
     // State of the mode (JSON parsed), null without one
     property var mode: null
+    // The way back to herdr's own interface is offered only in a mode (not for the workspaces of the window)
+    property bool canLeave: true
     signal activated(string section, string id)
     signal added(string section)
     signal leave()
@@ -41,7 +43,7 @@ Rectangle {
 
     Flickable {
         id: flick
-        anchors { fill: parent; topMargin: FiliTheme.space3; bottomMargin: leaveButton.height + FiliTheme.space3; rightMargin: FiliTheme.borderWidth }
+        anchors { fill: parent; topMargin: FiliTheme.space3; bottomMargin: (leaveButton.visible ? leaveButton.height : 0) + FiliTheme.space3; rightMargin: FiliTheme.borderWidth }
         contentHeight: column.height
         clip: true
         boundsBehavior: Flickable.StopAtBounds
@@ -208,6 +210,7 @@ Rectangle {
     // Leave the mode: herdr's own interface opens in a tab, for the same server
     Text {
         id: leaveButton
+        visible: side.canLeave
         anchors { left: parent.left; bottom: parent.bottom; leftMargin: FiliTheme.margin / 2; bottomMargin: FiliTheme.space2 }
         height: FiliTheme.sideRowHeight
         verticalAlignment: Text.AlignVCenter

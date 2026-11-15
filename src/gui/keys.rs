@@ -48,6 +48,9 @@ const DEFAULT: &[(&str, &str)] = &[
     ("rename-pane", ""),
     ("edit-scrollback", "Ctrl+Alt+Shift+E"),
     ("next-agent", "Ctrl+Alt+A"),
+    ("next-workspace", "Ctrl+Alt+PgDown"),
+    ("previous-workspace", "Ctrl+Alt+PgUp"),
+    ("new-workspace", ""),
     ("zoom-in", "Ctrl++ | Ctrl+="),
     ("zoom-out", "Ctrl+-"),
     ("zoom-reset", "Ctrl+0"),
@@ -106,6 +109,8 @@ fn overlay(preset: &str) -> Vec<(String, String)> {
             set("resize-mode", "Meta+Alt+R");
             set("edit-scrollback", "Meta+Alt+Shift+E");
             set("next-agent", "Meta+Alt+A");
+            set("next-workspace", "Meta+Alt+PgDown");
+            set("previous-workspace", "Meta+Alt+PgUp");
         }
         // Prefix Ctrl+B, then a key, as in tmux (a tmux running inside the terminal then needs another prefix)
         "tmux" => {
@@ -123,6 +128,8 @@ fn overlay(preset: &str) -> Vec<(String, String)> {
             set("resize-mode", "Ctrl+B, R");
             set("edit-scrollback", "Ctrl+B, E");
             set("next-agent", "Ctrl+B, A");
+            set("next-workspace", "Ctrl+B, )");
+            set("previous-workspace", "Ctrl+B, (");
             set("close-window", "Ctrl+B, Shift+X");
             set("next-tab", "Ctrl+B, N");
             set("previous-tab", "Ctrl+B, P");

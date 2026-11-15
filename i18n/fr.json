@@ -167,5 +167,10 @@
  "Connecting to %1…": "Connexion à %1…",
  "Starting herdr on %1…": "Démarrage de herdr sur %1…",
  "Cannot reach %1: %2": "%1 injoignable : %2",
- "Lost the link to %1, connecting again…": "Lien avec %1 perdu, reconnexion…"
+ "Lost the link to %1, connecting again…": "Lien avec %1 perdu, reconnexion…",
+ "Close %1? A command is still running.": "Fermer %1 ? Une commande est en cours.",
+ "Folder of the workspace": "Dossier de l’espace de travail",
+ "Move to Workspace": "Déplacer vers l’espace",
+ "New Workspace…": "Nouvel espace de travail…",
+ "Not a folder: %1": "Pas un dossier : %1"
 }

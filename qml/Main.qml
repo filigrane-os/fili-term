@@ -19,6 +19,40 @@ Window {
     readonly property var tab: current >= 0 && current < tabs.length ? tabs[current] : null
     readonly property var view: tab ? tab.active : null
 
+    // Workspaces: native tabs are grouped by project (the git root of the first pane's folder, else the folder). The
+    // workspace shown is the one of the current tab; a new tab joins it, a tab whose folder leaves its project stays.
+    property string workspace: ""
+    // Names given to workspaces (Rename Workspace…), by id, for the life of the window
+    property var workspaceNames: ({})
+    // The tab shown last in each workspace
+    property var lastInWorkspace: ({})
+    // Tabs of the row: those of the workspace shown, and herdr's (they have none)
+    function shownInRow(t) {
+        return t.modeTab !== "" || t.workspace === workspace;
+    }
+    readonly property var rowTabs: tabs.filter(t => shownInRow(t))
+    // Workspaces in the order of their first tab: {id, tabs}
+    readonly property var nativeWorkspaces: {
+        const out = [];
+        for (const t of tabs) {
+            if (t.modeTab !== "")
+                continue;
+            let w = out.find(x => x.id === t.workspace);
+            if (!w) {
+                w = { id: t.workspace, tabs: [] };
+                out.push(w);
+            }
+            w.tabs.push(t);
+        }
+        return out;
+    }
+    function workspaceLabel(id) {
+        if (workspaceNames[id])
+            return workspaceNames[id];
+        const parts = Aeroport.shortPath(id).split("/").filter(x => x !== "");
+        return parts.length ? parts[parts.length - 1] : "/";
+    }
+
     // Settings of fili-term.toml, read when the window opens
     readonly property var settings: JSON.parse(Aeroport.settingsJson())
     property int fontSize: settings.font_size
@@ -62,8 +96,8 @@ Window {
         const t = tabComponent.createObject(stack, Object.assign({ visible: false }, props || {}));
         return t;
     }
-    function addTab(attach, dir, argv) {
-        const t = newTab();
+    function addTab(attach, dir, argv, inWorkspace) {
+        const t = newTab({ workspace: inWorkspace || win.workspace || Aeroport.projectRoot(dir || win.cwd) });
         t.start({ sessionId: attach, cwd: dir, command: argv || [] });
         tabs = tabs.concat([t]);
         select(tabs.length - 1);
@@ -74,6 +108,10 @@ Window {
         current = i;
         // A tab of herdr: herdr's focus follows (its sidebar, the agents' place)
         const t = tabs[i];
+        if (t.modeTab === "") {
+            workspace = t.workspace;
+            lastInWorkspace[t.workspace] = t;
+        }
         if (t.modeTab !== "" && modeState && !modeState.tabs.some(x => x.id === t.modeTab && x.active))
             modeClient.act(JSON.stringify({ op: "tab", id: t.modeTab }));
         for (let k = 0; k < tabs.length; ++k) {
@@ -84,8 +122,10 @@ Window {
         tabs[i].focusActive();
     }
     function step(delta) {
-        if (tabs.length > 1)
-            select((current + delta + tabs.length) % tabs.length);
+        // Through the tabs of the row (the workspace shown)
+        const row = rowTabs;
+        if (row.length > 1)
+            select(tabs.indexOf(row[(row.indexOf(tab) + delta + row.length) % row.length]));
     }
     function zoom(delta) {
         fontSize = delta === 0 ? settings.font_size : Math.max(6, Math.min(48, fontSize + delta));
@@ -101,13 +141,19 @@ Window {
         }
         if (hangUp)
             t.closeAll();
+        const ws = t.workspace;
         tabs = tabs.filter(x => x !== t);
         t.destroy();
         if (tabs.length === 0) {
             win.close();
             return;
         }
-        select(Math.min(i, tabs.length - 1));
+        // The neighbour of the same workspace comes first (after it, before it), else the tab now at that place
+        let next = tabs.findIndex((x, k) => k >= i && x.modeTab === t.modeTab && x.workspace === ws);
+        for (let k = Math.min(i, tabs.length) - 1; next < 0 && k >= 0; --k)
+            if (tabs[k].modeTab === t.modeTab && tabs[k].workspace === ws)
+                next = k;
+        select(next >= 0 ? next : Math.min(i, tabs.length - 1));
     }
     // Close one pane (the tab with its last pane); a pane of herdr closes in herdr
     function closePane(v, hangUp) {
@@ -387,23 +433,28 @@ Window {
     }
     // A tab dragged in the row and dropped at x (row coordinates): its new place. herdr's tabs move in herdr.
     function dropTab(from, x) {
+        // `to`: the place among the tabs of the row (the others are hidden)
         let to = 0;
         for (let k = 0; k < tabs.length; ++k) {
             const it = tabRepeater.itemAt(k);
-            if (k !== from && it && it.x + it.width / 2 < x)
+            if (k !== from && it && it.visible && it.x + it.width / 2 < x)
                 ++to;
         }
         const t = tabs[from];
-        if (!t || to === from)
+        const others = rowTabs.filter(o => o !== t);
+        if (!t || to === rowTabs.indexOf(t))
             return;
         if (t.modeTab !== "") {
-            const before = tabs.filter((x, i) => i !== from).slice(0, to).filter(x => x.modeTab !== "").length;
+            const before = others.slice(0, to).filter(x => x.modeTab !== "").length;
             modeAct({ op: "move-tab", id: t.modeTab, index: before });
             return;
         }
         const shown = tab;
         const list = tabs.filter(x => x !== t);
-        list.splice(to, 0, t);
+        // Before the tab now at that place of the row, else after the last of the row
+        const target = others[to];
+        const at = target ? list.indexOf(target) : others.length ? list.indexOf(others[others.length - 1]) + 1 : list.length;
+        list.splice(at, 0, t);
         tabs = list;
         const firstMode = list.findIndex(x => x.modeTab !== "");
         if (firstMode >= 0)
@@ -412,6 +463,10 @@ Window {
     }
     readonly property var swapLabels: ({ left: "With the Pane on the Left", right: "With the Pane on the Right", up: "With the Pane Above", down: "With the Pane Below" })
     function menuAction(id) {
+        if (id.startsWith("native:")) {
+            nativeMenuAction(id.slice(7));
+            return;
+        }
         if (!id.startsWith("pane:")) {
             herdrMenuAction(id);
             return;
@@ -470,7 +525,9 @@ Window {
     property string modeActive: ""
     // The sidebar of the mode, beside herdr's tabs (View > Show Sidebar hides it, for the window)
     property bool sidebarWanted: Aeroport.uiGet("sidebar") !== "0"
-    readonly property bool sidebarShown: modeState !== null && sidebarWanted && (!tab || tab.modeTab !== "" || !tabs.some(t => t.modeTab !== ""))
+    // The window's own sidebar (no mode): the workspaces and the agents, shown when there are two workspaces or an agent
+    readonly property bool nativeSidebarShown: modeState === null && sidebarWanted && (nativeWorkspaces.length > 1 || nativeAgents.length > 0)
+    readonly property bool sidebarShown: nativeSidebarShown || (modeState !== null && sidebarWanted && (!tab || tab.modeTab !== "" || !tabs.some(t => t.modeTab !== "")))
     function toggleSidebar() {
         sidebarWanted = !sidebarWanted;
         Aeroport.uiSet("sidebar", sidebarWanted ? "1" : "0");
@@ -652,10 +709,123 @@ Window {
         }
         return out;
     }
+    // Agents of the native panes: {t: tab, v: pane}
+    readonly property var nativeAgents: {
+        const out = [];
+        for (const t of tabs)
+            if (t.modeTab === "")
+                for (const v of t.leaves)
+                    if (v.agent !== "")
+                        out.push({ t: t, v: v });
+        return out;
+    }
+    function worstOf(states) {
+        return ["blocked", "working", "done"].find(s => states.indexOf(s) >= 0) || "";
+    }
+    // The sidebar of the window itself: its workspaces (tab count, worst agent state) and its agents
+    readonly property var nativeModel: {
+        const spaces = nativeWorkspaces.map(w => ({ id: w.id, label: workspaceLabel(w.id), detail: w.tabs.length > 1 ? String(w.tabs.length) : "",
+                                                    status: worstOf(w.tabs.map(t => agentStateOf(t))), active: w.id === workspace }));
+        const agents = nativeAgents.map(a => ({ id: String(a.v.sessionId), label: a.v.paneName !== "" ? a.v.paneName : a.v.agent,
+                                                detail: workspaceLabel(a.t.workspace), workspace: a.t.workspace, status: a.v.agentState, active: a.v === view }));
+        return { connected: true, sections: [
+            { key: "workspaces", title: "Workspaces", add: true, items: spaces },
+            { key: "agents", title: "Agents", add: false, items: sortedAgents(agents), choice: agentsSort === "priority" ? Aeroport.tr("Priority") : Aeroport.tr("Grouped") }
+        ] };
+    }
+    // Show a workspace: the tab shown last in it
+    function showWorkspace(id) {
+        let t = lastInWorkspace[id];
+        if (!t || tabs.indexOf(t) < 0 || t.workspace !== id)
+            t = tabs.find(x => x.modeTab === "" && x.workspace === id);
+        if (t)
+            select(tabs.indexOf(t));
+    }
+    function stepWorkspace(delta) {
+        const spaces = nativeWorkspaces;
+        if (spaces.length > 1)
+            showWorkspace(spaces[(spaces.findIndex(w => w.id === workspace) + delta + spaces.length) % spaces.length].id);
+    }
+    function nativeActivate(section, id) {
+        if (section === "workspaces")
+            showWorkspace(id);
+        else if (section === "agents")
+            showSession(parseInt(id));
+    }
+    // Ask for the folder of a workspace; done(folder, project) gets the folder typed and its project
+    function askWorkspaceFolder(x, y, done) {
+        namePrompt.open(x, y, 320, Aeroport.tr("Folder of the workspace"), view ? Aeroport.shortPath(view.cwd) : "~", text => {
+            const dir = Aeroport.expandDir(text);
+            if (dir === "")
+                showError(Aeroport.tr("Not a folder: %1").replace("%1", text));
+            else
+                done(dir, Aeroport.projectRoot(dir));
+        });
+    }
+    // A new workspace: a tab in the folder asked for (the one of that project when it exists)
+    function newWorkspace() {
+        const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4);
+        askWorkspaceFolder(p.x, p.y, (dir, root) => {
+            if (nativeWorkspaces.some(w => w.id === root))
+                showWorkspace(root);
+            else
+                addTab(0, dir, [], root);
+        });
+    }
+    function moveToWorkspace(t, id) {
+        t.workspace = id;
+        if (t === tab)
+            workspace = id;
+        lastInWorkspace[id] = t;
+    }
+    // Close a workspace with its tabs; a running command is confirmed first
+    function closeWorkspace(id) {
+        const list = tabs.filter(t => t.modeTab === "" && t.workspace === id);
+        const go = () => list.forEach(t => closeTab(t, true));
+        if (list.some(t => t.leaves.some(v => v.runningCommand() !== "")))
+            confirm(Aeroport.tr("Close %1? A command is still running.").replace("%1", workspaceLabel(id)), Aeroport.tr("Close"), go);
+        else
+            go();
+    }
+    property var nativeTarget: null
+    function nativeSidebarMenu(section, item, x, y) {
+        if (section === "workspaces") {
+            nativeTarget = { ws: item.id, x: x, y: y };
+            contextMenu.open(x, y, [{ id: "native:rename-workspace", label: Aeroport.tr("Rename Workspace…") }, { separator: true },
+                                    { id: "native:close-workspace", label: Aeroport.tr("Close Workspace") }]);
+        } else if (section === "agents") {
+            nativeTarget = { x: x, y: y };
+            contextMenu.open(x, y, [{ id: "native:show-agent:" + item.id, label: Aeroport.tr("Show Agent") }]);
+        }
+    }
+    function nativeTabMenu(t, x, y) {
+        nativeTarget = { tab: t, ws: t.workspace, x: x, y: y };
+        const others = nativeWorkspaces.filter(w => w.id !== t.workspace).map(w => ({ id: "native:move-ws:" + w.id, label: workspaceLabel(w.id) }));
+        contextMenu.open(x, y, [{ id: "native:new-tab", label: Aeroport.tr("New Tab") },
+                                { id: "native:move", label: Aeroport.tr("Move to Workspace"), children: others.concat([{ id: "native:move-new", label: Aeroport.tr("New Workspace…") }]) },
+                                { separator: true }, { id: "native:close-tab", label: Aeroport.tr("Close Tab") }]);
+    }
+    function nativeMenuAction(name) {
+        const m = nativeTarget;
+        if (!m)
+            return;
+        if (name === "rename-workspace") {
+            namePrompt.open(m.x, m.y, 240, Aeroport.tr("Name of the workspace"), workspaceLabel(m.ws), v => {
+                const names = Object.assign({}, workspaceNames);
+                if (v.trim() !== "") names[m.ws] = v.trim(); else delete names[m.ws];
+                workspaceNames = names;
+            });
+        } else if (name === "close-workspace") closeWorkspace(m.ws);
+        else if (name === "new-tab") addTab(0, m.tab && m.tab.active ? m.tab.active.cwd : cwd, [], m.ws);
+        else if (name === "close-tab") closeTab(m.tab, true);
+        else if (name === "move-new") askWorkspaceFolder(m.x, m.y, (dir, root) => moveToWorkspace(m.tab, root));
+        else if (name.startsWith("move-ws:")) moveToWorkspace(m.tab, name.slice(8));
+        else if (name.startsWith("show-agent:")) showSession(parseInt(name.slice(11)));
+    }
     // Sidebar: herdr's sections, agents sorted (the panes are in the tab itself)
     readonly property var sidebarModel: {
         if (!modeState)
-            return null;
+            return nativeSidebarShown ? nativeModel : null;
         const v = tab;
         const sections = modeState.sections.map(sec => sec.key !== "agents" ? sec
             : Object.assign({}, sec, { items: sortedAgents(sec.items), choice: agentsSort === "priority" ? Aeroport.tr("Priority") : Aeroport.tr("Grouped") }));
@@ -962,7 +1132,10 @@ Window {
         else if (name === "next-agent") win.nextAgent();
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
-        else if (name.startsWith("tab-")) { const n = parseInt(name.slice(4)); win.select(n === 9 ? win.tabs.length - 1 : n - 1) }
+        else if (name.startsWith("tab-")) { const row = win.rowTabs, n = parseInt(name.slice(4)); const t = row[n === 9 ? row.length - 1 : n - 1]; if (t) win.select(win.tabs.indexOf(t)) }
+        else if (name === "next-workspace") win.stepWorkspace(1);
+        else if (name === "previous-workspace") win.stepWorkspace(-1);
+        else if (name === "new-workspace") win.newWorkspace();
         else if (name === "next-tab") win.step(1);
         else if (name === "previous-tab") win.step(-1);
         else if (name === "zoom-in") win.zoom(1);
@@ -1145,7 +1318,7 @@ Window {
     // Tabs, from two: one per shell of the window (Facteur's look); middle click or × closes one
     Rectangle {
         id: tabRow
-        visible: win.tabs.length > 1 || win.modeState !== null
+        visible: win.rowTabs.length > 1 || win.modeState !== null
         anchors { left: parent.left; right: parent.right; top: toolbarLine.bottom }
         height: visible ? FiliTheme.tabBarHeight : 0
         color: FiliTheme.background
@@ -1158,6 +1331,7 @@ Window {
                 Rectangle {
                     id: tab
                     required property int index
+                    visible: win.tabs[index] !== undefined && win.shownInRow(win.tabs[index])
                     // Dragged along the row: follows the pointer, dropped in its new place
                     property real dragDx: 0
                     transform: Translate { x: tab.dragDx }
@@ -1167,7 +1341,7 @@ Window {
                     readonly property bool hovered: tabArea.containsMouse || closeTabArea.containsMouse
                     // Readable width (80 to 180), shared out when the row is full
                     width: Math.max(80, Math.min(180, label.implicitWidth + 2 * FiliTheme.space4 + 16 + (tab.state !== "" ? 18 : 0),
-                                                 (tabRow.width - 2 * FiliTheme.margin) / win.tabs.length - FiliTheme.space3))
+                                                 (tabRow.width - 2 * FiliTheme.margin) / Math.max(1, win.rowTabs.length) - FiliTheme.space3))
                     height: FiliTheme.tabHeight
                     radius: FiliTheme.radiusControl
                     color: on ? FiliTheme.surfaceActive : hovered ? FiliTheme.surfaceHover : "transparent"
@@ -1225,10 +1399,11 @@ Window {
                             const t = win.tabs[tab.index];
                             if (e.button === Qt.RightButton) {
                                 // herdr's tab menu on a tab of herdr
-                                if (t.modeTab !== "") {
-                                    const p = tabArea.mapToItem(null, e.x, e.y);
+                                const p = tabArea.mapToItem(null, e.x, e.y);
+                                if (t.modeTab !== "")
                                     win.herdrMenu("tabs", { id: t.modeTab, label: t.modeLabel }, p.x, p.y);
-                                }
+                                else
+                                    win.nativeTabMenu(t, p.x, p.y);
                             } else if (e.button === Qt.MiddleButton) {
                                 win.closeTab(t, true);
                             } else {
@@ -1261,12 +1436,16 @@ Window {
         anchors { left: parent.left; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
         width: visible ? FiliTheme.sidebarWidth : 0
         mode: win.sidebarModel
+        canLeave: win.modeState !== null
         onActivated: (section, id) => {
-            win.modeAct({ op: "select", section: section, id: id });
+            if (win.modeState)
+                win.modeAct({ op: "select", section: section, id: id });
+            else
+                win.nativeActivate(section, id);
             win.refocus();
         }
-        onAdded: section => { win.modeAct({ op: "new", section: section }); win.refocus() }
-        onContextRequested: (section, item, x, y) => win.herdrMenu(section, item, x, y)
+        onAdded: section => { if (win.modeState) win.modeAct({ op: "new", section: section }); else win.newWorkspace(); win.refocus() }
+        onContextRequested: (section, item, x, y) => { if (win.modeState) win.herdrMenu(section, item, x, y); else win.nativeSidebarMenu(section, item, x, y) }
         onChoiceClicked: section => { if (section === "agents") win.toggleAgentsSort() }
         onLeave: { win.leaveMode(); win.refocus() }
     }

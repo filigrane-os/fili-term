@@ -99,6 +99,13 @@
   waits or finished out of sight (a click shows the pane). Next Agent (action next-agent, Ctrl+Alt+A, tmux prefix+a).
   `fili-term report working|blocked|done|idle [--agent NAME]` for agents' hooks (Claude Code's in the README), through
   the ctl sockets: no change to the daemon.
+- Workspaces of the window: native tabs are grouped by project (the git root of the first pane's folder, else the
+  folder). The tab row shows the tabs of the workspace shown; a new tab joins it; a tab whose folder leaves its
+  project stays where it is (Move to Workspace in the tab menu). The sidebar, shown when the window has two workspaces
+  or an agent runs (View > Show Sidebar still hides it), lists the Workspaces (tab count, the worst agent state) and
+  the Agents (grouped by workspace or by priority); a click shows one, + asks for a folder (the project's workspace if
+  it exists), right click renames or closes a workspace (a running command is confirmed). Next / Previous Workspace
+  (Ctrl+Alt+PgDown / PgUp, tmux prefix+) and prefix+( ), New Workspace… (menu).
 
 ## v2.0.0 (2026-11-12)
 

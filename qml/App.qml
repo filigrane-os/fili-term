@@ -21,7 +21,8 @@ QtObject {
                 if (mode !== "")
                     open.startMode(mode, null);
                 else
-                    open.addTab(attach, cwd, command);
+                    // From another program (a script, a shell): the workspace of its folder's project
+                    open.addTab(attach, cwd, command, cwd !== "" ? Aeroport.projectRoot(cwd) : "");
                 open.requestActivate();
                 return;
             }

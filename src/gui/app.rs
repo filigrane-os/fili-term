@@ -107,6 +107,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "shortPath"]
         fn short_path(self: &Aeroport, path: &QString) -> QString;
+        /// The project of a folder: the nearest folder up that holds `.git`, else the folder itself ("" gives home)
+        #[qinvokable]
+        #[cxx_name = "projectRoot"]
+        fn project_root(self: &Aeroport, path: &QString) -> QString;
+        /// A typed folder made absolute (`~`, `..`, symlinks resolved), "" when it is not a folder
+        #[qinvokable]
+        #[cxx_name = "expandDir"]
+        fn expand_dir(self: &Aeroport, path: &QString) -> QString;
     }
 
     impl cxx_qt::Initialize for Aeroport {}
@@ -404,12 +412,81 @@ impl qobject::Aeroport {
         QString::from(&format!("[{}]", list.join(",")))
     }
 
+    fn project_root(&self, path: &QString) -> QString {
+        QString::from(&project_root_of(&path.to_string()))
+    }
+
+    fn expand_dir(&self, path: &QString) -> QString {
+        QString::from(&expand_dir_of(&path.to_string(), &home()))
+    }
+
     fn short_path(&self, path: &QString) -> QString {
         let (path, home) = (path.to_string(), home());
         match path.strip_prefix(&home) {
             Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => QString::from(&format!("~{rest}")),
             _ => QString::from(&path),
         }
+    }
+}
+
+/// The nearest folder up (the folder itself included) that holds `.git` (a folder, or a file for a linked worktree),
+/// else the folder itself; "" gives the home folder
+fn project_root_of(path: &str) -> String {
+    let start = if path.is_empty() { home() } else { path.to_string() };
+    let mut dir = std::path::Path::new(&start);
+    loop {
+        if dir.join(".git").exists() {
+            return dir.to_string_lossy().into_owned();
+        }
+        match dir.parent() {
+            Some(p) if p != std::path::Path::new("/") && !p.as_os_str().is_empty() => dir = p,
+            _ => return start,
+        }
+    }
+}
+
+/// A typed folder: `~` and `~/x` from `home`, then made canonical; "" unless it is an existing folder
+fn expand_dir_of(text: &str, home: &str) -> String {
+    let t = text.trim();
+    let full = if t.is_empty() || t == "~" {
+        home.to_string()
+    } else if let Some(rest) = t.strip_prefix("~/") {
+        format!("{home}/{rest}")
+    } else {
+        t.to_string()
+    };
+    if !full.starts_with('/') {
+        return String::new();
+    }
+    std::fs::canonicalize(&full).ok().filter(|p| p.is_dir()).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+
+    #[test]
+    fn project_roots_and_typed_folders() {
+        let base = std::env::temp_dir().join(format!("fili-term-ws-{}", std::process::id()));
+        let deep = base.join("repo/src/a");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(base.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(base.join("plain/x")).unwrap();
+        // A linked worktree has a .git file
+        std::fs::create_dir_all(base.join("wt/src")).unwrap();
+        std::fs::write(base.join("wt/.git"), "gitdir: elsewhere").unwrap();
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        assert_eq!(project_root_of(&s(&deep)), s(&base.join("repo")));
+        assert_eq!(project_root_of(&s(&base.join("repo"))), s(&base.join("repo")));
+        assert_eq!(project_root_of(&s(&base.join("wt/src"))), s(&base.join("wt")));
+        assert_eq!(project_root_of(&s(&base.join("plain/x"))), s(&base.join("plain/x")));
+        let home = s(&base.join("plain"));
+        assert_eq!(expand_dir_of("~/x", &home), s(&std::fs::canonicalize(base.join("plain/x")).unwrap()));
+        assert_eq!(expand_dir_of("~", &home), s(&std::fs::canonicalize(&home).unwrap()));
+        assert_eq!(expand_dir_of("~/missing", &home), "");
+        assert_eq!(expand_dir_of("relative", &home), "");
+        assert_eq!(expand_dir_of(&format!("{}/../plain/", s(&base.join("repo"))), &home), s(&std::fs::canonicalize(base.join("plain")).unwrap()));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 

@@ -90,6 +90,15 @@ in `~/.claude/settings.json`:
 }
 ```
 
+## Workspaces
+
+Tabs are grouped by project: the workspace of a tab is the git root of its first pane's folder, else the folder. The tab
+row shows the tabs of the workspace shown, a new tab joins it, and a tab whose folder leaves its project stays (right
+click on a tab: Move to Workspace). The sidebar appears when the window has two workspaces or an agent runs (View >
+Show Sidebar, Ctrl+Shift+B, hides it): Workspaces with their tab count and the worst state of their agents, Agents
+grouped by workspace or by priority. Ctrl+Alt+PgDown / PgUp change workspace, **+** (or Tabs > New Workspace…) asks for
+a folder, right click renames or closes a workspace.
+
 ## Integrated modes
 
 When the program runs in a tab: `herdr` typed in a terminal is integrated at once (the daemon reads the foreground

@@ -23,6 +23,8 @@ Item {
     property int lastExit: 0
     // A tab of herdr: its tab id, its label and the status of its agents (its panes come from herdr's layout, each
     // terminal attached to one pane: modePane / modeTerminal of the view)
+    // Workspace of the tab (a project folder: the git root of its first pane); "" for the tabs of herdr
+    property string workspace: ""
     property string modeTab: ""
     property string modeLabel: ""
     property string modeStatus: ""
