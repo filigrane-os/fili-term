@@ -1,6 +1,8 @@
-// Toolbar icon button: hover surfaceHover, pressed surfaceActive, disabled muted. No tooltip: Qt Quick Controls would
-// cost the window process ~3 MB; `tip` is the accessible name
+// Toolbar icon button: hover surfaceHover, pressed surfaceActive, disabled muted. `tip` is its name: the accessible name
+// and a small label under the button after the pointer rested on it (drawn by the window, `showTip` / `hideTip`: Qt
+// Quick Controls would cost the window process ~3 MB), with `hint` (its key) after it
 import QtQuick
+import QtQuick.Window
 import Fili.Term
 
 Rectangle {
@@ -9,6 +11,7 @@ Rectangle {
     property string name
     property bool filled: false
     property string tip
+    property string hint
     property bool enabledState: true
     // Toggle state (filter on): drawn with the active surface
     property bool toggled: false
@@ -30,11 +33,29 @@ Rectangle {
     }
     Accessible.role: Accessible.Button
     Accessible.name: b.tip
+    // A button out of use still says what it is
+    Timer {
+        id: tipTimer
+        interval: 450
+        onTriggered: {
+            const w = Window.window;
+            if (w && w.showTip && b.tip !== "")
+                w.showTip(b, b.hint !== "" ? b.tip + "   " + b.hint : b.tip);
+        }
+    }
+    function hideTip() {
+        tipTimer.stop();
+        const w = Window.window;
+        if (w && w.hideTip)
+            w.hideTip(b);
+    }
+    onVisibleChanged: if (!visible) hideTip()
     MouseArea {
         id: area
         anchors.fill: parent
         hoverEnabled: true
-        enabled: b.enabledState
-        onClicked: b.clicked()
+        onContainsMouseChanged: containsMouse ? tipTimer.restart() : b.hideTip()
+        onPressed: b.hideTip()
+        onClicked: if (b.enabledState) b.clicked()
     }
 }

@@ -736,18 +736,66 @@ Window {
             items.push({ id: "", label: here, detail: "", status: "", active: true });
         return { key: "machines", title: "Machines", add: false, items: items };
     }
-    // The rest of the pane, workspace and machine commands, under the More button of the header
-    function moreMenu(x, y) {
+    // The tools of the header, left to right. `prio` says which stay when the window is narrow (1 first): the others go
+    // into the More menu, which is then shown at the end of the row. `act` is the command (key and bar menu entry)
+    readonly property var headerActions: [
+        { id: "sidebar", icon: "sidebar", label: "Show Sidebar", act: "toggle-sidebar", prio: 3 },
+        { id: "journal", icon: "list", label: "Show Command Journal", act: "toggle-journal", prio: 4 },
+        { id: "split-right", icon: "layout-right", label: "Split Right", act: "split-right", prio: 6 },
+        { id: "split-down", icon: "layout-below", label: "Split Down", act: "split-down", prio: 7 },
+        { id: "resize", icon: "resize", label: "Resize Pane", act: "resize-mode", prio: 13 },
+        { id: "broadcast", icon: "radio", label: "Type in Every Pane", act: "broadcast", prio: 5 },
+        { id: "commands", icon: "terminal", label: "Commands", act: "commands", prio: 2 },
+        { id: "next-agent", icon: "bell", label: "Next Agent Waiting", act: "next-agent", prio: 8 },
+        { id: "new-workspace", icon: "folder", label: "New Workspace…", act: "new-workspace", prio: 9 },
+        { id: "new-worktree", icon: "branch", label: "New Tab in Worktree…", act: "new-worktree", prio: 10 },
+        { id: "machines", icon: "server", label: "Machines…", act: "machines", prio: 11 },
+        { id: "history", icon: "compose", label: "Open History in the Editor", act: "edit-scrollback", prio: 12 }
+    ]
+    function headerOn(a) {
+        return a.id === "sidebar" ? sidebarShown : a.id === "journal" ? journalOn : a.id === "broadcast" ? broadcasting : false;
+    }
+    function headerEnabled(a) {
         const native = tab !== null && tab.modeTab === "";
         const several = tab !== null && tab.leaves.length > 1;
-        const entry = (name, label, enabled) => ({ id: "act:" + name, label: Aeroport.tr(label), hint: keyHint(name), enabled: enabled !== false });
-        contextMenu.open(x, y, [
-            entry("split-right", "Split Right", tab !== null), entry("split-down", "Split Down", tab !== null),
-            entry("resize-mode", "Resize Pane", several), { separator: true },
-            entry("new-workspace", "New Workspace…", native), entry("new-worktree", "New Tab in Worktree…", native && view !== null && Aeroport.isRepo(view.cwd)),
-            entry("next-agent", "Next Agent Waiting", true), { separator: true },
-            entry("machines", "Machines…", true), entry("edit-scrollback", "Open History in the Editor", view !== null)
-        ]);
+        switch (a.id) {
+        case "split-right": case "split-down": return tab !== null;
+        case "resize": return several;
+        case "broadcast": return native && several;
+        case "new-workspace": return native;
+        case "new-worktree": return native && view !== null && Aeroport.isRepo(view.cwd);
+        case "history": return view !== null;
+        default: return true;
+        }
+    }
+    // What fits: the room between the title (kept at least 120 wide) and the search field holds the buttons, the new tab
+    // button always; when not all fit, one slot goes to More and the least needed ones go into its menu
+    readonly property var headerVisible: {
+        const unit = 28 + FiliTheme.space1;
+        const room = toolbar.searchLeft - 2 * FiliTheme.space3 - FiliTheme.margin - 120 - unit;
+        let n = Math.floor((room + FiliTheme.space1) / unit);
+        const all = headerActions.length;
+        if (n < all)
+            n = Math.max(0, n - 1);
+        return headerActions.slice().sort((a, b) => a.prio - b.prio).slice(0, Math.min(n, all)).map(a => a.id);
+    }
+    // The tools that did not fit, under the More button of the header
+    function moreMenu(x, y) {
+        const hidden = headerActions.filter(a => headerVisible.indexOf(a.id) < 0);
+        contextMenu.open(x, y, hidden.map(a => ({ id: "act:" + a.act, label: Aeroport.tr(a.label), hint: keyHint(a.act), checked: headerOn(a), enabled: headerEnabled(a) })));
+    }
+    // A small label under a button of the window after the pointer rested on it (IconButton asks for it)
+    property Item tipOwner: null
+    property string tipText: ""
+    function showTip(owner, text) {
+        tipOwner = owner;
+        tipText = text;
+    }
+    function hideTip(owner) {
+        if (owner === tipOwner) {
+            tipOwner = null;
+            tipText = "";
+        }
     }
     // `fili-term ctl machine NAME`: a machine by its label, or this computer ("local")
     function runMachine(name) {
@@ -1544,7 +1592,7 @@ Window {
         height: win.headerShown ? FiliTheme.toolbarHeight : 0
         color: FiliTheme.background
         Text {
-            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: tools.left; rightMargin: searchBar.inHeader ? searchBar.width + searchNav.width + 2 * FiliTheme.space3 + FiliTheme.space1 : FiliTheme.space3; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: tools.left; rightMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
             text: win.tabTitle(win.tab)
             elide: Text.ElideRight
             font.family: FiliTheme.font
@@ -1552,36 +1600,38 @@ Window {
             font.weight: FiliTheme.weightAccent
             color: FiliTheme.text
         }
-        // Tools in three groups: what the window shows (sidebar, command journal), the pane tools (type in every pane,
-        // custom commands, the rest of the pane and workspace commands) and the new tab. Each is also a key and an
-        // entry of the bar menu: the header can be hidden
+        // Where the search field starts: at the left of the window buttons (the field and its two arrows)
+        readonly property real windowEdge: win.windowButtons ? windowButton.x : width - FiliTheme.margin
+        readonly property real searchLeft: windowEdge - FiliTheme.space3 - searchNav.width - FiliTheme.space1 - 180
+        // The tools, left of the search field: as many buttons as the window has room for (win.headerActions), More for
+        // those that did not fit, and the new tab button. Each is also a key and an entry of the bar menu: the header
+        // can be hidden
         Row {
             id: tools
-            anchors { right: win.windowButtons ? windowButton.left : parent.right; rightMargin: win.windowButtons ? FiliTheme.space3 : FiliTheme.margin; verticalCenter: parent.verticalCenter }
-            spacing: FiliTheme.space3
-            Row {
-                spacing: FiliTheme.space1
-                IconButton { name: "sidebar"; tip: Aeroport.tr("Show Sidebar"); toggled: win.sidebarShown; onClicked: win.run("toggle-sidebar") }
-                IconButton { name: "list"; tip: Aeroport.tr("Show Command Journal"); toggled: win.journalOn; onClicked: win.run("toggle-journal") }
-            }
-            Row {
-                spacing: FiliTheme.space1
-                IconButton {
-                    name: "radio"
-                    tip: Aeroport.tr("Type in Every Pane")
-                    toggled: win.broadcasting
-                    enabledState: win.tab !== null && win.tab.modeTab === "" && win.tab.leaves.length > 1
-                    onClicked: win.run("broadcast")
-                }
-                IconButton { name: "terminal"; tip: Aeroport.tr("Commands"); onClicked: win.commandPicker() }
-                IconButton {
-                    id: moreButton
-                    name: "more"
-                    tip: Aeroport.tr("More")
-                    onClicked: { const p = moreButton.mapToItem(null, 0, moreButton.height + FiliTheme.space1); win.moreMenu(p.x, p.y) }
+            x: toolbar.searchLeft - FiliTheme.space3 - width
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: FiliTheme.space1
+            Repeater {
+                model: win.headerActions
+                delegate: IconButton {
+                    required property var modelData
+                    visible: win.headerVisible.indexOf(modelData.id) >= 0
+                    name: modelData.icon
+                    tip: Aeroport.tr(modelData.label)
+                    hint: win.keyHint(modelData.act)
+                    toggled: win.headerOn(modelData)
+                    enabledState: win.headerEnabled(modelData)
+                    onClicked: win.run(modelData.act)
                 }
             }
-            IconButton { name: "plus"; tip: Aeroport.tr("New Tab"); onClicked: win.run("new-tab") }
+            IconButton {
+                id: moreButton
+                visible: win.headerVisible.length < win.headerActions.length
+                name: "more"
+                tip: Aeroport.tr("More")
+                onClicked: { const p = moreButton.mapToItem(null, 0, moreButton.height + FiliTheme.space1); win.moreMenu(p.x, p.y) }
+            }
+            IconButton { name: "plus"; tip: Aeroport.tr("New Tab"); hint: win.keyHint("new-tab"); onClicked: win.run("new-tab") }
         }
         // Window buttons at the far right: close, and the panel of window actions (niri)
         Rectangle {
@@ -1775,7 +1825,7 @@ Window {
         id: searchBar
         readonly property bool inHeader: win.headerShown
         visible: inHeader || win.searching
-        x: inHeader ? toolbar.x + tools.x - width - searchNav.width - FiliTheme.space3 - FiliTheme.space1 : stack.x + stack.width - width - searchNav.width - FiliTheme.space4 - 12 - FiliTheme.space1
+        x: inHeader ? toolbar.x + toolbar.searchLeft : stack.x + stack.width - width - searchNav.width - FiliTheme.space4 - 12 - FiliTheme.space1
         y: inHeader ? (toolbar.height - height) / 2 : stack.y + FiliTheme.space3
         z: 60
         width: inHeader ? 180 : 240
@@ -2509,6 +2559,30 @@ Window {
                     Component.onCompleted: forceActiveFocus()
                 }
             }
+        }
+    }
+
+    // The label under a button (win.showTip), over everything
+    Rectangle {
+        id: tooltip
+        visible: win.tipText !== ""
+        z: 100
+        readonly property point below: win.tipOwner ? win.tipOwner.mapToItem(win.contentItem, win.tipOwner.width / 2, win.tipOwner.height) : Qt.point(0, 0)
+        width: tipLabel.implicitWidth + 2 * FiliTheme.space2
+        height: tipLabel.implicitHeight + 2 * FiliTheme.space1
+        x: Math.max(FiliTheme.space1, Math.min(win.width - width - FiliTheme.space1, below.x - width / 2))
+        y: below.y + FiliTheme.space1
+        radius: FiliTheme.radiusControl
+        color: FiliTheme.backgroundDeep
+        border.width: FiliTheme.borderWidth
+        border.color: FiliTheme.border
+        Text {
+            id: tipLabel
+            anchors.centerIn: parent
+            text: win.tipText
+            font.family: FiliTheme.font
+            font.pixelSize: FiliTheme.sizeSmall
+            color: FiliTheme.text
         }
     }
 

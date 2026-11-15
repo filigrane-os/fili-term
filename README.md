@@ -118,9 +118,10 @@ width. Each entry starts with the time the command was launched (the date for an
 daemon was last restarted have none). A program on the alternate screen (nvim, htop) takes the whole pane, as does a
 pane that is too narrow.
 
-The header has buttons for the sidebar, the journal, typing in every pane, the custom commands and a More menu (split,
-resize, new workspace, new tab in a worktree, next agent, machines, history in the editor); each is also a key and an
-entry of the bar menu, so the header can stay hidden.
+The header has buttons, left of the search field, for the sidebar, the journal, splitting, typing in every pane, the
+custom commands, the next agent, workspaces, worktrees, machines and the history in the editor, then New Tab. A narrow
+window shows fewer of them and puts the rest in the More (…) menu; resting the pointer on one shows its name and key.
+Each is also a key and an entry of the bar menu, so the header can stay hidden.
 
 ## herdr on another machine
 

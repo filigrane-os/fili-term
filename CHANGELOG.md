@@ -147,10 +147,12 @@
   the whole width, as has a pane narrower than 560 pixels or a pane of herdr. Off by default; the choice made from
   the menu is kept. Each entry starts with the time the command was launched (the date for an older day); the daemon
   records it (`started_at` in `fili-term blocks` too), so it shows for commands run after the daemon restarted.
-- Header buttons for the new features, in three groups: Show Sidebar and Show Command Journal (toggles), Type in Every
-  Pane (toggle, for a tab with several panes), Commands (the picker) and More (split right / down, resize, new
-  workspace, new tab in a worktree, next agent, machines, history in the editor), then New Tab. Each is also a key and an
-  entry of the bar menu.
+- Header buttons for the new features, left of the search field: Show Sidebar, Show Command Journal, Split Right and
+  Down, Resize Pane, Type in Every Pane, Commands, Next Agent Waiting, New Workspace, New Tab in a Worktree, Machines,
+  History in the Editor, then New Tab. As many as the window has room for are shown (the title keeps 120 pixels), the
+  least needed first into a More (…) menu that lists the others. A small label with the key appears under a button
+  after the pointer rests on it (also on the buttons out of use), drawn by the window, without Qt Quick Controls.
+  Each is also a key and an entry of the bar menu.
 - Fix: Close Pane (menu or key) closed the whole window: the session just hung up reported its end after its pane was
   taken out of the tab, and that closed the tab. A pane no longer in its tab is ignored.
 
