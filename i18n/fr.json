@@ -187,5 +187,10 @@
  "Stop": "Arrêter",
  "Machines": "Machines",
  "This Computer": "Cet ordinateur",
- "No machine named %1": "Aucune machine nommée %1"
+ "No machine named %1": "Aucune machine nommée %1",
+ "More": "Plus",
+ "Show Sidebar": "Afficher la barre latérale",
+ "Show Command Journal": "Afficher le journal des commandes",
+ "Next Agent Waiting": "Agent suivant en attente",
+ "Machines…": "Machines…"
 }

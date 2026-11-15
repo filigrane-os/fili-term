@@ -145,7 +145,14 @@
   it runs), lined up with the block, the command of a block that began above the view kept at the top. The grid keeps
   the rest of the width, so programs lay themselves out as usual; a program on the alternate screen (nvim, htop) has
   the whole width, as has a pane narrower than 560 pixels or a pane of herdr. Off by default; the choice made from
-  the menu is kept.
+  the menu is kept. Each entry starts with the time the command was launched (the date for an older day); the daemon
+  records it (`started_at` in `fili-term blocks` too), so it shows for commands run after the daemon restarted.
+- Header buttons for the new features, in three groups: Show Sidebar and Show Command Journal (toggles), Type in Every
+  Pane (toggle, for a tab with several panes), Commands (the picker) and More (split right / down, resize, new
+  workspace, new tab in a worktree, next agent, machines, history in the editor), then New Tab. Each is also a key and an
+  entry of the bar menu.
+- Fix: Close Pane (menu or key) closed the whole window: the session just hung up reported its end after its pane was
+  taken out of the tab, and that closed the tab. A pane no longer in its tab is ignored.
 
 ## v2.0.0 (2026-11-12)
 

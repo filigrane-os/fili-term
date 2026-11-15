@@ -158,7 +158,9 @@ Window {
     // Close one pane (the tab with its last pane); a pane of herdr closes in herdr
     function closePane(v, hangUp) {
         const t = v ? v.paneTab : null;
-        if (!t)
+        // A pane already taken out of its tab (its session ended after Close Pane hung it up, a moment before it is
+        // destroyed) must not close the tab, or the window, in its turn
+        if (!t || (t.modeTab === "" && t.leaves.indexOf(v) < 0))
             return;
         // A pane of herdr closes in herdr; the next state takes it away
         if (hangUp && t.modeTab !== "" && v.modePane !== "" && modeState) {
@@ -591,6 +593,10 @@ Window {
     }
     readonly property var swapLabels: ({ left: "With the Pane on the Left", right: "With the Pane on the Right", up: "With the Pane Above", down: "With the Pane Below" })
     function menuAction(id) {
+        if (id.startsWith("act:")) {
+            run(id.slice(4));
+            return;
+        }
         if (id.startsWith("machine:")) {
             switchMachine(id.slice(8));
             return;
@@ -729,6 +735,19 @@ Window {
         if (!known)
             items.push({ id: "", label: here, detail: "", status: "", active: true });
         return { key: "machines", title: "Machines", add: false, items: items };
+    }
+    // The rest of the pane, workspace and machine commands, under the More button of the header
+    function moreMenu(x, y) {
+        const native = tab !== null && tab.modeTab === "";
+        const several = tab !== null && tab.leaves.length > 1;
+        const entry = (name, label, enabled) => ({ id: "act:" + name, label: Aeroport.tr(label), hint: keyHint(name), enabled: enabled !== false });
+        contextMenu.open(x, y, [
+            entry("split-right", "Split Right", tab !== null), entry("split-down", "Split Down", tab !== null),
+            entry("resize-mode", "Resize Pane", several), { separator: true },
+            entry("new-workspace", "New Workspace…", native), entry("new-worktree", "New Tab in Worktree…", native && view !== null && Aeroport.isRepo(view.cwd)),
+            entry("next-agent", "Next Agent Waiting", true), { separator: true },
+            entry("machines", "Machines…", true), entry("edit-scrollback", "Open History in the Editor", view !== null)
+        ]);
     }
     // `fili-term ctl machine NAME`: a machine by its label, or this computer ("local")
     function runMachine(name) {
@@ -1533,10 +1552,35 @@ Window {
             font.weight: FiliTheme.weightAccent
             color: FiliTheme.text
         }
+        // Tools in three groups: what the window shows (sidebar, command journal), the pane tools (type in every pane,
+        // custom commands, the rest of the pane and workspace commands) and the new tab. Each is also a key and an
+        // entry of the bar menu: the header can be hidden
         Row {
             id: tools
             anchors { right: win.windowButtons ? windowButton.left : parent.right; rightMargin: win.windowButtons ? FiliTheme.space3 : FiliTheme.margin; verticalCenter: parent.verticalCenter }
-            spacing: FiliTheme.space1
+            spacing: FiliTheme.space3
+            Row {
+                spacing: FiliTheme.space1
+                IconButton { name: "sidebar"; tip: Aeroport.tr("Show Sidebar"); toggled: win.sidebarShown; onClicked: win.run("toggle-sidebar") }
+                IconButton { name: "list"; tip: Aeroport.tr("Show Command Journal"); toggled: win.journalOn; onClicked: win.run("toggle-journal") }
+            }
+            Row {
+                spacing: FiliTheme.space1
+                IconButton {
+                    name: "radio"
+                    tip: Aeroport.tr("Type in Every Pane")
+                    toggled: win.broadcasting
+                    enabledState: win.tab !== null && win.tab.modeTab === "" && win.tab.leaves.length > 1
+                    onClicked: win.run("broadcast")
+                }
+                IconButton { name: "terminal"; tip: Aeroport.tr("Commands"); onClicked: win.commandPicker() }
+                IconButton {
+                    id: moreButton
+                    name: "more"
+                    tip: Aeroport.tr("More")
+                    onClicked: { const p = moreButton.mapToItem(null, 0, moreButton.height + FiliTheme.space1); win.moreMenu(p.x, p.y) }
+                }
+            }
             IconButton { name: "plus"; tip: Aeroport.tr("New Tab"); onClicked: win.run("new-tab") }
         }
         // Window buttons at the far right: close, and the panel of window actions (niri)
@@ -1901,6 +1945,10 @@ Window {
                             // The block's first row, kept at the top while it began above the view (its command stays in sight)
                             readonly property int first: Math.max(0, modelData.start)
                             readonly property bool tall: height >= 2 * journalMargin.rowHeight
+                            // When it was launched: the time today, the date before (nothing from an older daemon)
+                            readonly property var when: modelData.at !== null ? new Date(modelData.at * 1000) : null
+                            readonly property string clock: when === null ? ""
+                                : when.toDateString() === new Date().toDateString() ? Qt.formatTime(when, "HH:mm") : Qt.formatDate(when, "dd/MM")
                             readonly property bool failed: modelData.state === 2 && modelData.exit !== null && modelData.exit !== 0
                             y: win.settings.padding + first * journalMargin.rowHeight
                             width: journalMargin.width - FiliTheme.borderWidth
@@ -1930,7 +1978,19 @@ Window {
                                 }
                             }
                             Text {
-                                anchors { left: parent.left; leftMargin: FiliTheme.space3; right: entry.tall ? parent.right : status.left; rightMargin: FiliTheme.space2 }
+                                id: clockText
+                                visible: entry.clock !== ""
+                                x: FiliTheme.space3
+                                width: 38
+                                height: journalMargin.rowHeight
+                                verticalAlignment: Text.AlignVCenter
+                                text: entry.clock
+                                font.family: FiliTheme.font
+                                font.pixelSize: FiliTheme.sizeSmall
+                                color: FiliTheme.muted
+                            }
+                            Text {
+                                anchors { left: parent.left; leftMargin: FiliTheme.space3 + (clockText.visible ? clockText.width + FiliTheme.space1 : 0); right: entry.tall ? parent.right : status.left; rightMargin: FiliTheme.space2 }
                                 height: journalMargin.rowHeight
                                 verticalAlignment: Text.AlignVCenter
                                 text: entry.modelData.command

@@ -55,6 +55,8 @@ pub struct Block {
     pub state: State,
     pub exit: Option<i32>,
     pub started: Option<Instant>,
+    /// When the command was launched, seconds since the epoch (the clock time shown in the window's journal)
+    pub started_at: Option<u64>,
     pub duration: Option<Duration>,
     pub command: String,
     pub cwd: String,
@@ -218,13 +220,14 @@ impl Blocks {
             .iter()
             .map(|b| {
                 format!(
-                    "{{\"id\":{},\"command\":{},\"cwd\":{},\"state\":\"{}\",\"exit\":{},\"duration_ms\":{}}}",
+                    "{{\"id\":{},\"command\":{},\"cwd\":{},\"state\":\"{}\",\"exit\":{},\"duration_ms\":{},\"started_at\":{}}}",
                     b.id,
                     json_string(&b.command),
                     json_string(&b.cwd),
                     if b.state == State::Running { "running" } else { "done" },
                     b.exit.map_or("null".into(), |e| e.to_string()),
                     b.duration.map_or("null".into(), |d| d.as_millis().to_string()),
+                    b.started_at.map_or("null".into(), |t| t.to_string()),
                 )
             })
             .collect();
@@ -272,6 +275,7 @@ impl Blocks {
                         state: State::Prompt,
                         exit: None,
                         started: None,
+                        started_at: None,
                         duration: None,
                         command: String::new(),
                         cwd,
@@ -331,6 +335,7 @@ impl Blocks {
                 if let Some(b) = self.current_mut(State::Prompt) {
                     b.state = State::Running;
                     b.started = Some(Instant::now());
+                    b.started_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs());
                     b.command = command;
                     if !cwd.is_empty() {
                         b.cwd = cwd;

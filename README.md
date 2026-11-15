@@ -114,7 +114,13 @@ Ctrl+Alt+J (View > Show Command Journal, or `journal = true` in fili-term.toml) 
 about a fifth of its width. Next to each command block on screen it shows the command typed, a check or a cross with the
 exit code, and how long it took (Running while it runs); a block that began above the view keeps its command at the
 top. What you type and what comes out stay separate without squeezing the output: the grid only loses the margin's
-width. A program on the alternate screen (nvim, htop) takes the whole pane, as does a pane that is too narrow.
+width. Each entry starts with the time the command was launched (the date for an older day; commands run before the
+daemon was last restarted have none). A program on the alternate screen (nvim, htop) takes the whole pane, as does a
+pane that is too narrow.
+
+The header has buttons for the sidebar, the journal, typing in every pane, the custom commands and a More menu (split,
+resize, new workspace, new tab in a worktree, next agent, machines, history in the editor); each is also a key and an
+entry of the bar menu, so the header can stay hidden.
 
 ## herdr on another machine
 

@@ -268,7 +268,7 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "sendPasted"]
         fn send_pasted(self: Pin<&mut TerminalView>, text: &QString);
-        /// The command blocks on screen for the journal margin, JSON [{id, start, end, state, exit, ms, command}]; rows
+        /// The command blocks on screen for the journal margin, JSON [{id, start, end, state, exit, ms, at, command}]; rows
         /// of the view, start negative when the block began above it
         #[qinvokable]
         #[cxx_name = "journalJson"]
@@ -658,6 +658,8 @@ struct Shown {
 /// What the daemon said of a block
 #[derive(Clone, Default)]
 struct BlockInfo {
+    /// When the command was launched, seconds since the epoch (None from an older daemon)
+    started: Option<u32>,
     /// 0 prompt, 1 running, 2 done
     state: u8,
     exit: Option<i32>,
@@ -946,7 +948,10 @@ fn decode(kind: u8, payload: &[u8]) -> Option<Message> {
             let duration = r.u32().ok()?;
             let command = r.string().ok()?;
             let cwd = r.string().ok()?;
+            // From a daemon that sends it: when the command was launched (seconds since the epoch)
+            let started = r.u32().ok().filter(|t| *t != u32::MAX);
             let info = BlockInfo {
+                started,
                 state,
                 exit: (exit != i32::MIN).then_some(exit),
                 duration: (duration != u32::MAX).then_some(duration),
@@ -2608,13 +2613,14 @@ impl qobject::TerminalView {
                 }
                 let command = info.command.split_whitespace().collect::<Vec<_>>().join(" ");
                 Some(format!(
-                    "{{\"id\":{},\"start\":{},\"end\":{},\"state\":{},\"exit\":{},\"ms\":{},\"command\":{}}}",
+                    "{{\"id\":{},\"start\":{},\"end\":{},\"state\":{},\"exit\":{},\"ms\":{},\"at\":{},\"command\":{}}}",
                     b.id,
                     b.start,
                     b.end,
                     info.state,
                     info.exit.map_or("null".to_string(), |e| e.to_string()),
                     info.duration.map_or("null".to_string(), |d| d.to_string()),
+                    info.started.map_or("null".to_string(), |t| t.to_string()),
                     json_string(&command)
                 ))
             })

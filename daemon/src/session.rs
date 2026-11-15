@@ -758,6 +758,8 @@ fn encode_block(b: &blocks::Block) -> Vec<u8> {
     proto::put_u32(&mut out, b.duration.map_or(u32::MAX, |d| d.as_millis().min(u32::MAX as u128 - 1) as u32));
     proto::put_string(&mut out, &b.command);
     proto::put_string(&mut out, &b.cwd);
+    // Added after the first version of the message: a window that does not know it stops reading before it
+    proto::put_u32(&mut out, b.started_at.map_or(u32::MAX, |t| t.min(u32::MAX as u64 - 1) as u32));
     out
 }
 
