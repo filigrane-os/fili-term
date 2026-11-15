@@ -17,7 +17,7 @@ pub const PRESETS: &[&str] = &["default", "mac", "tmux", "none"];
 const DEFAULT: &[(&str, &str)] = &[
     ("new-tab", "Ctrl+Shift+T"),
     ("new-window", "Ctrl+Shift+N"),
-    ("close-tab", "Ctrl+Shift+W"),
+    ("close-tab", "Ctrl+Alt+Shift+W"),
     ("close-window", "Ctrl+Shift+Q"),
     ("copy", "Ctrl+Shift+C | Ctrl+Ins | Copy"),
     ("paste", "Ctrl+Shift+V | Shift+Ins | Paste"),
@@ -32,6 +32,18 @@ const DEFAULT: &[(&str, &str)] = &[
     ("tab-7", "Alt+7"),
     ("tab-8", "Alt+8"),
     ("tab-9", "Alt+9"),
+    ("split-right", "Ctrl+Shift+D"),
+    ("split-down", "Ctrl+Shift+E"),
+    ("close-pane", "Ctrl+Shift+W"),
+    ("zoom-pane", "Ctrl+Shift+Return | Ctrl+Shift+Enter"),
+    ("focus-left", "Ctrl+Alt+Left"),
+    ("focus-right", "Ctrl+Alt+Right"),
+    ("focus-up", "Ctrl+Alt+Up"),
+    ("focus-down", "Ctrl+Alt+Down"),
+    ("resize-left", "Ctrl+Alt+Shift+Left"),
+    ("resize-right", "Ctrl+Alt+Shift+Right"),
+    ("resize-up", "Ctrl+Alt+Shift+Up"),
+    ("resize-down", "Ctrl+Alt+Shift+Down"),
     ("zoom-in", "Ctrl++ | Ctrl+="),
     ("zoom-out", "Ctrl+-"),
     ("zoom-reset", "Ctrl+0"),
@@ -57,12 +69,21 @@ fn overlay(preset: &str) -> Vec<(String, String)> {
         "mac" => {
             set("new-tab", "Meta+T");
             set("new-window", "Meta+N");
-            set("close-tab", "Meta+W");
+            set("close-pane", "Meta+W");
+            set("close-tab", "Meta+Alt+W");
             set("close-window", "Meta+Shift+W");
             set("copy", "Meta+C | Ctrl+Ins | Copy");
             set("paste", "Meta+V | Shift+Ins | Paste");
-            set("next-tab", "Meta+Shift+] | Meta+Alt+Right | Ctrl+Tab");
-            set("previous-tab", "Meta+Shift+[ | Meta+Alt+Left | Ctrl+Shift+Tab");
+            set("next-tab", "Meta+Shift+] | Ctrl+Tab");
+            set("previous-tab", "Meta+Shift+[ | Ctrl+Shift+Tab");
+            // Panes as in iTerm2: Cmd+D right, Cmd+Shift+D below, Cmd+Option+arrows to move
+            set("split-right", "Meta+D");
+            set("split-down", "Meta+Shift+D");
+            set("zoom-pane", "Meta+Shift+Return | Meta+Shift+Enter");
+            for d in ["Left", "Right", "Up", "Down"] {
+                set(&format!("focus-{}", d.to_lowercase()), &format!("Meta+Alt+{d}"));
+                set(&format!("resize-{}", d.to_lowercase()), &format!("Meta+Alt+Shift+{d}"));
+            }
             for n in 1..=9 {
                 set(&format!("tab-{n}"), &format!("Meta+{n}"));
             }
@@ -83,6 +104,14 @@ fn overlay(preset: &str) -> Vec<(String, String)> {
             set("new-tab", "Ctrl+B, C");
             set("new-window", "Ctrl+B, Shift+C");
             set("close-tab", "Ctrl+B, &");
+            set("split-right", "Ctrl+B, %");
+            set("split-down", "Ctrl+B, \"");
+            set("close-pane", "Ctrl+B, X");
+            set("zoom-pane", "Ctrl+B, Z");
+            for d in ["Left", "Right", "Up", "Down"] {
+                set(&format!("focus-{}", d.to_lowercase()), &format!("Ctrl+B, {d}"));
+                set(&format!("resize-{}", d.to_lowercase()), &format!("Ctrl+B, Ctrl+{d}"));
+            }
             set("close-window", "Ctrl+B, Shift+X");
             set("next-tab", "Ctrl+B, N");
             set("previous-tab", "Ctrl+B, P");
@@ -204,7 +233,8 @@ mod tests {
         assert_eq!(keys(t, "new-tab"), ["Ctrl+T", "Alt+T"]);
         assert!(keys(t, "find").is_empty());
         assert_eq!(keys(t, "zoom-in"), ["Ctrl+Up"]);
-        assert_eq!(keys(t, "close-tab"), ["Meta+W"]);
+        assert_eq!(keys(t, "close-pane"), ["Meta+W"]);
+        assert_eq!(keys(t, "focus-left"), ["Meta+Alt+Left"]);
     }
 
     #[test]

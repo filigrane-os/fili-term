@@ -13,9 +13,11 @@ Window {
     // --hold: a tab whose command ended stays open (its last screen is still there) until it is closed
     property bool hold: false
     property string initialTitle: ""
+    // Tabs of the window (Tab.qml: a tree of panes), the one shown, and its pane with the keyboard
     property var tabs: []
     property int current: -1
-    readonly property var view: current >= 0 && current < tabs.length ? tabs[current] : null
+    readonly property var tab: current >= 0 && current < tabs.length ? tabs[current] : null
+    readonly property var view: tab ? tab.active : null
 
     // Settings of fili-term.toml, read when the window opens
     readonly property var settings: JSON.parse(Aeroport.settingsJson())
@@ -53,10 +55,16 @@ Window {
     title: view && view.title ? view.title : initialTitle !== "" ? initialTitle : "Aéroport"
 
     function tabTitle(t) {
-        return !t ? "" : t.modeTab !== "" ? t.modeLabel : t.title ? t.title : win.initialTitle !== "" ? win.initialTitle : Aeroport.shortPath(t.cwd);
+        const v = t ? t.active : null;
+        return !v ? "" : t.modeTab !== "" ? t.modeLabel : v.title ? v.title : win.initialTitle !== "" ? win.initialTitle : Aeroport.shortPath(v.cwd);
+    }
+    function newTab(props) {
+        const t = tabComponent.createObject(stack, Object.assign({ visible: false }, props || {}));
+        return t;
     }
     function addTab(attach, dir, argv) {
-        const t = termComponent.createObject(stack, { sessionId: attach, cwd: dir, command: argv || [] });
+        const t = newTab();
+        t.start({ sessionId: attach, cwd: dir, command: argv || [] });
         tabs = tabs.concat([t]);
         select(tabs.length - 1);
     }
@@ -73,7 +81,7 @@ Window {
             tabs[k].setShown(k === i);
         }
         tabs[i].unseen = false;
-        tabs[i].forceActiveFocus();
+        tabs[i].focusActive();
     }
     function step(delta) {
         if (tabs.length > 1)
@@ -92,7 +100,7 @@ Window {
             return;
         }
         if (hangUp)
-            t.closeSession();
+            t.closeAll();
         tabs = tabs.filter(x => x !== t);
         t.destroy();
         if (tabs.length === 0) {
@@ -101,9 +109,92 @@ Window {
         }
         select(Math.min(i, tabs.length - 1));
     }
+    // Close one pane (the tab with its last pane); a pane of herdr closes in herdr
+    function closePane(v, hangUp) {
+        const t = v ? v.paneTab : null;
+        if (!t)
+            return;
+        if (t.leaves.length <= 1) {
+            closeTab(t, hangUp);
+            return;
+        }
+        if (hangUp)
+            v.closeSession();
+        t.remove(v);
+        if (t === tab)
+            t.focusActive();
+    }
+    // The pane of herdr shown in a tab of herdr (null outside)
+    function herdrPane(t) {
+        const info = t && t.modeTab !== "" && modeState ? modeState.tabs.find(x => x.id === t.modeTab) : null;
+        return info ? info.panes.find(p => p.terminal === t.modeTerminal) || null : null;
+    }
+    // Split the pane with the keyboard: a shell in the same folder, right of it or below; in a tab of herdr, herdr splits
+    function split(dir) {
+        const t = tab, v = view;
+        if (!t || !v)
+            return;
+        if (t.modeTab !== "") {
+            const p = herdrPane(t);
+            if (p)
+                modeAct({ op: "split", id: p.id, direction: dir });
+            return;
+        }
+        t.split(dir, { cwd: v.cwd, command: [] });
+    }
+    // Menu of a pane (right click, or Shift+right click when the program takes the mouse): copy and paste, the panes,
+    // and in a tab of herdr the entries of herdr's pane menu
+    function paneMenu(v, x, y) {
+        const t = v.paneTab;
+        const p = mapFromItem(v, x, y);
+        let entries = [{ id: "pane:copy", label: Aeroport.tr("Copy"), hint: keyHint("copy") },
+                       { id: "pane:paste", label: Aeroport.tr("Paste"), hint: keyHint("paste") }, { separator: true }];
+        if (t.modeTab !== "") {
+            const hp = herdrPane(t);
+            menuTarget = { section: "panes", item: hp, x: p.x, y: p.y };
+            if (hp)
+                entries = entries.concat(herdrEntries("panes", hp));
+        } else {
+            const several = t.leaves.length > 1;
+            const swaps = ["left", "right", "up", "down"].map(d => ({ id: "pane:swap-" + d, label: Aeroport.tr(swapLabels[d]), enabled: t.neighbour(v, d) !== null }));
+            entries = entries.concat([
+                { id: "pane:split-right", label: Aeroport.tr("Split Right"), hint: keyHint("split-right") },
+                { id: "pane:split-down", label: Aeroport.tr("Split Down"), hint: keyHint("split-down") },
+                { separator: true },
+                { id: "pane:swap", label: Aeroport.tr("Swap Pane"), enabled: several, children: swaps.filter(x => x.enabled) },
+                { id: "pane:zoom", label: t.zoomed ? Aeroport.tr("Show All Panes") : Aeroport.tr("Zoom Pane"), hint: keyHint("zoom-pane"), enabled: several },
+                { separator: true },
+                { id: "pane:close", label: Aeroport.tr("Close Pane"), hint: keyHint("close-pane") }
+            ]);
+            menuTarget = { section: "pane", item: null, x: p.x, y: p.y };
+        }
+        contextMenu.open(p.x, p.y, entries);
+    }
+    readonly property var swapLabels: ({ left: "With the Pane on the Left", right: "With the Pane on the Right", up: "With the Pane Above", down: "With the Pane Below" })
+    function menuAction(id) {
+        if (!id.startsWith("pane:")) {
+            herdrMenuAction(id);
+            return;
+        }
+        const name = id.slice(5);
+        if (name.startsWith("swap-")) {
+            if (tab) tab.swap(name.slice(5));
+        } else if (name === "zoom") {
+            run("zoom-pane");
+        } else if (name === "close") {
+            run("close-pane");
+        } else {
+            run(name);
+        }
+    }
+    // First key of an action, for a menu
+    function keyHint(action) {
+        const k = keymap.find(x => x.action === action);
+        return k && k.keys.length ? k.keys[0] : "";
+    }
     // The chat drawer (Rob) about a command block: the context file names it, Rob reads its output himself
-    function askRob(id) {
-        const v = win.view;
+    function askRob(id, on) {
+        const v = on || win.view;
         if (!v || id <= 0)
             return;
         const all = JSON.parse(v.contextJson()).blocks;
@@ -120,7 +211,7 @@ Window {
         onStateChanged: win.syncMode()
         // An agent waits for an answer or finished, while nobody watches herdr's tabs
         onNotice: notice => {
-            if (win.active && win.view && win.view.modeTab !== "")
+            if (win.active && win.tab && win.tab.modeTab !== "")
                 return;
             const n = JSON.parse(notice);
             const who = n.agent || Aeroport.tr("An agent");
@@ -135,7 +226,7 @@ Window {
     property string modeActive: ""
     // The sidebar of the mode, beside herdr's tabs (View > Show Sidebar hides it, for the window)
     property bool sidebarWanted: Aeroport.uiGet("sidebar") !== "0"
-    readonly property bool sidebarShown: modeState !== null && sidebarWanted && (!view || view.modeTab !== "" || !tabs.some(t => t.modeTab !== ""))
+    readonly property bool sidebarShown: modeState !== null && sidebarWanted && (!tab || tab.modeTab !== "" || !tabs.some(t => t.modeTab !== ""))
     function toggleSidebar() {
         sidebarWanted = !sidebarWanted;
         Aeroport.uiSet("sidebar", sidebarWanted ? "1" : "0");
@@ -149,14 +240,14 @@ Window {
         return "";
     }
     // Program of a plain tab that could be integrated ("" when none, or a mode already runs in the window)
-    function integrable(t) {
-        return t && t.modeTab === "" && modeClient.state === "" ? modeKind(t.foreground) : "";
+    function integrable(v) {
+        return v && v.paneTab && v.paneTab.modeTab === "" && modeClient.state === "" ? modeKind(v.foreground) : "";
     }
     // Start the mode: from a tab where the program runs (its client leaves, the tab goes back to its shell), or alone
     function startMode(kind, fromTab) {
         if (modeClient.state !== "")
             return;
-        modeAt = fromTab ? tabs.indexOf(fromTab) + 1 : tabs.length;
+        modeAt = fromTab ? tabs.indexOf(fromTab.paneTab) + 1 : tabs.length;
         modeActive = "";
         if (!modeClient.start(kind, fromTab ? fromTab.foregroundPid() : 0))
             Aeroport.notify(Aeroport.tr("Cannot integrate %1").replace("%1", kind), Aeroport.tr("It runs on another machine."));
@@ -189,15 +280,14 @@ Window {
             const terminal = pane ? pane.terminal : w.terminal;
             if (!terminal)
                 continue;
+            const props = { cwd: pane ? pane.cwd : w.cwd, command: modeClient.attachCommand(terminal) };
             if (t && t.modeTerminal !== terminal) {
-                // Another pane: a new attachment in the same place
-                const old = t;
-                t = termComponent.createObject(stack, { cwd: pane ? pane.cwd : w.cwd, command: modeClient.attachCommand(terminal), modeTab: w.id, modeTerminal: terminal, modePane: old.modePane, visible: false });
-                list[list.indexOf(old)] = t;
-                old.closeSession();
-                old.destroy();
+                // Another pane: a new attachment in the same tab
+                t.modeTerminal = terminal;
+                t.resetTo(props);
             } else if (!t) {
-                t = termComponent.createObject(stack, { cwd: pane ? pane.cwd : w.cwd, command: modeClient.attachCommand(terminal), modeTab: w.id, modeTerminal: terminal, visible: false });
+                t = newTab({ modeTab: w.id, modeTerminal: terminal });
+                t.start(props);
                 list.push(t);
             }
             t.modeLabel = w.label;
@@ -206,10 +296,10 @@ Window {
         }
         // Tabs of herdr that went away (closed, another workspace, the mode stopped)
         for (const t of list.filter(x => x.modeTab !== "" && made.indexOf(x) < 0)) {
-            t.closeSession();
+            t.closeAll();
             t.destroy();
         }
-        const shown = view;
+        const shown = tab;
         const others = list.filter(x => x.modeTab === "");
         const at = Math.min(modeAt, others.length);
         tabs = others.slice(0, at).concat(made).concat(others.slice(at));
@@ -255,7 +345,7 @@ Window {
     readonly property var sidebarModel: {
         if (!modeState)
             return null;
-        const v = view;
+        const v = tab;
         const sections = modeState.sections.map(sec => sec.key !== "agents" ? sec
             : Object.assign({}, sec, { items: sortedAgents(sec.items), choice: agentsSort === "priority" ? Aeroport.tr("Priority") : Aeroport.tr("Grouped") }));
         const w = v && v.modeTab !== "" ? modeState.tabs.find(x => x.id === v.modeTab) : null;
@@ -268,6 +358,9 @@ Window {
     property var menuTarget: null
     function herdrMenu(section, item, x, y) {
         menuTarget = { section: section, item: item, x: x, y: y };
+        contextMenu.open(x, y, herdrEntries(section, item));
+    }
+    function herdrEntries(section, item) {
         let entries = [];
         if (section === "tabs")
             entries = [{ id: "rename-tab", label: Aeroport.tr("Rename Tab…") }, { id: "new-tab", label: Aeroport.tr("New Tab") },
@@ -290,7 +383,7 @@ Window {
                        { id: "split-right", label: Aeroport.tr("Split Right") }, { id: "split-down", label: Aeroport.tr("Split Down") },
                        { separator: true }, { id: "close-pane", label: Aeroport.tr("Close Pane") }]);
         }
-        contextMenu.open(x, y, entries);
+        return entries;
     }
     // The focused pane of the tab of a pane (swap)
     function focusedPaneOf(paneId) {
@@ -348,7 +441,7 @@ Window {
         delegate: Shortcut {
             required property var modelData
             sequences: modelData.keys
-            enabled: win.view !== null && win.view.modeTab !== "" && !contextMenu.visible && !namePrompt.visible
+            enabled: win.tab !== null && win.tab.modeTab !== "" && !contextMenu.visible && !namePrompt.visible
             onActivated: win.herdrKey(modelData.action)
         }
     }
@@ -357,7 +450,7 @@ Window {
         return sec ? sec.items : [];
     }
     function herdrKey(name) {
-        const v = view;
+        const v = tab;
         if (!v || v.modeTab === "" || !modeState)
             return;
         const parts = name.split(":");
@@ -444,7 +537,7 @@ Window {
         onTriggered: if (win.active && win.view) Aeroport.publishContext(win.view.contextJson(), 0)
     }
     onActiveChanged: contextTimer.restart()
-    onViewChanged: contextTimer.restart()
+    onViewChanged: { contextTimer.restart(); if (searching && view !== searchView) closeSearch() }
     Connections {
         target: win.view
         function onBlocksRevisionChanged() { contextTimer.restart() }
@@ -453,8 +546,11 @@ Window {
 
     // Search in the history (Ctrl+Shift+F): the bar at the top right of the terminal, the matches are lit in the grid
     property bool searching: false
+    // The terminal searched (the bar acts on it; another pane or tab ends the search)
+    property var searchView: null
     function openSearch() {
         searching = true;
+        searchView = view;
         searchField.forceActiveFocus();
         searchField.selectAll();
         if (view && searchField.text !== "")
@@ -463,11 +559,11 @@ Window {
     function closeSearch() {
         searching = false;
         searchField.text = "";
-        if (view)
-            view.searchClose();
+        if (searchView)
+            searchView.searchClose();
+        searchView = null;
         refocus();
     }
-    onCurrentChanged: if (searching) closeSearch()
 
     function refocus() {
         if (view && !aboutCard.visible && !windowPanel.visible && !contextMenu.visible && !namePrompt.visible)
@@ -479,9 +575,15 @@ Window {
         const v = win.view;
         if (name === "about") aboutCard.show();
         // In herdr's tabs, a new tab of herdr
-        else if (name === "new-tab") { if (v && v.modeTab !== "" && modeState) modeAct({ op: "new-tab" }); else win.addTab(0, v ? v.cwd : win.cwd, []) }
+        else if (name === "new-tab") { if (win.tab && win.tab.modeTab !== "" && modeState) modeAct({ op: "new-tab" }); else win.addTab(0, v ? v.cwd : win.cwd, []) }
         else if (name === "new-window") Instance.newWindow(v ? v.cwd : win.cwd);
-        else if (name === "close-tab") { if (v) win.closeTab(v, true) }
+        else if (name === "close-tab") { if (win.tab) win.closeTab(win.tab, true) }
+        else if (name === "close-pane") { if (v) win.closePane(v, true) }
+        else if (name === "split-right") win.split("right");
+        else if (name === "split-down") win.split("down");
+        else if (name === "zoom-pane") { if (win.tab) win.tab.toggleZoom() }
+        else if (name.startsWith("focus-")) { if (win.tab) win.tab.focusTowards(name.slice(6)) }
+        else if (name.startsWith("resize-")) { if (win.tab) win.tab.resize(name.slice(7), 3 * win.fontSize) }
         else if (name === "close-window") win.close();
         else if (name.startsWith("tab-")) { const n = parseInt(name.slice(4)); win.select(n === 9 ? win.tabs.length - 1 : n - 1) }
         else if (name === "next-tab") win.step(1);
@@ -519,7 +621,7 @@ Window {
     signal closed()
     onClosing: {
         for (const t of tabs)
-            t.closeSession();
+            t.closeAll();
         win.closed();
         win.destroy();
     }
@@ -528,16 +630,8 @@ Window {
         id: termComponent
         TerminalView {
             id: term
-            // Result of a command that ended while this tab was not shown, until the tab is selected
-            property bool unseen: false
-            property int lastExit: 0
-            // A tab of herdr: its tab id, the terminal attached, the pane chosen in the sidebar ("" the focused one),
-            // its label and the status of its agents
-            property string modeTab: ""
-            property string modeTerminal: ""
-            property string modePane: ""
-            property string modeLabel: ""
-            property string modeStatus: ""
+            // The tab (Tab.qml) whose tree holds this pane
+            property var paneTab: null
             // The user said "Not Now" to the offer: not asked again while the program stays in the foreground
             property string declined: ""
             onForegroundChanged: {
@@ -547,24 +641,34 @@ Window {
                 else if (win.integrable(term) !== "" && win.modePolicies[kind] === "auto" && declined !== kind)
                     win.startMode(kind, term);
             }
-            anchors.fill: parent
+            onActiveFocusChanged: if (activeFocus && paneTab) paneTab.setActive(term)
+            onContextRequested: (x, y) => win.paneMenu(term, x, y)
             fontFamily: FiliTheme.mono
             fontPixelSize: win.fontSize
             padding: win.settings.padding
             lineSpacing: win.settings.line_spacing
             colors: FiliTheme.terminalColors
-            onExited: if (!(win.hold && term.command.length > 0)) win.closeTab(term, false)
+            onExited: if (!(win.hold && term.command.length > 0)) win.closePane(term, false)
             onBell: win.alert(0)
             // A long command ended while nobody watches this terminal: a notification with its result
             onCommandFinished: (command, exit, duration) => {
                 const after = win.settings.notify_after;
-                if (term !== win.view) { term.unseen = true; term.lastExit = exit }
-                if (after <= 0 || duration < after * 1000 || (win.active && term === win.view))
+                const watched = term.paneTab === win.tab && term.visible;
+                if (term.paneTab !== win.tab) { term.paneTab.unseen = true; term.paneTab.lastExit = exit }
+                if (after <= 0 || duration < after * 1000 || (win.active && watched))
                     return;
                 const text = command.trim().replace(/\s+/g, " ");
                 Aeroport.notify(exit === 0 ? Aeroport.tr("Command finished") : Aeroport.tr("Command failed (status %1)").replace("%1", exit),
                                 (text.length > 100 ? text.slice(0, 100) + "…" : text) + " · " + Aeroport.duration(duration));
             }
+        }
+    }
+
+    Component {
+        id: tabComponent
+        Tab {
+            anchors.fill: parent
+            maker: termComponent
         }
     }
 
@@ -576,8 +680,8 @@ Window {
         height: win.headerShown ? FiliTheme.toolbarHeight : 0
         color: FiliTheme.background
         Text {
-            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: searchBar.inHeader ? searchBar.left : tools.left; rightMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
-            text: win.tabTitle(win.view)
+            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: tools.left; rightMargin: searchBar.inHeader ? searchBar.width + searchNav.width + 2 * FiliTheme.space3 + FiliTheme.space1 : FiliTheme.space3; verticalCenter: parent.verticalCenter }
+            text: win.tabTitle(win.tab)
             elide: Text.ElideRight
             font.family: FiliTheme.font
             font.pixelSize: FiliTheme.size
@@ -659,7 +763,8 @@ Window {
                     // What the tab does: the command being run (spinner), else the folder; a check or a cross when a
                     // command ended while the tab was not shown
                     readonly property var term: win.tabs[index]
-                    readonly property string running: { term.blocksRevision; return term.runningCommand() }
+                    readonly property var pane: term ? term.active : null
+                    readonly property string running: { if (!pane) return ""; pane.blocksRevision; return pane.runningCommand() }
                     readonly property string state: term.modeTab !== "" ? (term.modeStatus === "working" ? "running" : term.modeStatus === "blocked" ? "waiting" : term.modeStatus === "done" ? "ok" : "")
                         : running !== "" ? "running" : term.unseen ? (term.lastExit === 0 ? "ok" : "failed") : ""
                     Icon {
@@ -728,7 +833,7 @@ Window {
         mode: win.sidebarModel
         onActivated: (section, id) => {
             if (section === "panes") {
-                if (win.view) { win.view.modePane = id; win.syncMode() }
+                if (win.tab) { win.tab.modePane = id; win.syncMode() }
             } else {
                 win.modeAct({ op: "select", section: section, id: id });
             }
@@ -839,175 +944,238 @@ Window {
         IconButton { name: "chevron-right"; tip: Aeroport.tr("Next Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-next") }
     }
 
-    // Scroll bar of the history: a thin handle at the right edge, shown while scrolling, on hover and when dragged
+    // Dividers of the tab shown: a line, and a wider band around it that takes the drag (the cursor says which way)
     Item {
-        id: scrollBar
-        readonly property var v: win.view
-        readonly property int history: v ? v.historySize : 0
-        readonly property int rows: v ? Math.max(1, v.lines) : 1
-        readonly property real thumbHeight: Math.max(32, Math.min(height, height * rows / (rows + history)))
-        // 0 at the top of the history, 1 at the prompt
-        readonly property real fraction: history > 0 ? 1 - v.scrollOffset / history : 1
-        anchors { right: stack.right; top: stack.top; bottom: stack.bottom }
-        width: 14
-        z: 50
-        visible: history > 0
-        Rectangle {
-            id: thumb
-            x: parent.width - width - 3
-            width: grip.containsMouse || grip.drag.active ? 8 : 6
-            height: scrollBar.thumbHeight
-            radius: width / 2
-            color: FiliTheme.alpha(FiliTheme.text, grip.drag.active ? 0.55 : grip.containsMouse ? 0.45 : 0.3)
-            opacity: grip.containsMouse || grip.drag.active || hold.running ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 180 } }
-            Behavior on width { NumberAnimation { duration: 100 } }
-        }
-        Binding { target: thumb; property: "y"; value: scrollBar.fraction * (scrollBar.height - thumb.height); when: !grip.drag.active }
-        Timer { id: hold; interval: 700 }
-        Connections {
-            target: scrollBar.v
-            function onScrollOffsetChanged() { hold.restart() }
-            function onHistorySizeChanged() { hold.restart() }
-        }
-        MouseArea {
-            id: grip
-            anchors.fill: parent
-            hoverEnabled: true
-            drag.target: thumb
-            drag.axis: Drag.YAxis
-            drag.minimumY: 0
-            drag.maximumY: scrollBar.height - thumb.height
-            function follow(y) {
-                const span = scrollBar.height - thumb.height;
-                if (span > 0 && scrollBar.v)
-                    scrollBar.v.scrollToOffset(Math.round((1 - Math.max(0, Math.min(1, y / span))) * scrollBar.history));
-            }
-            // A click beside the handle jumps there; the handle then follows the cursor
-            onPressed: e => { if (e.y < thumb.y || e.y > thumb.y + thumb.height) follow(e.y - thumb.height / 2) }
-            onPositionChanged: if (grip.drag.active) follow(thumb.y)
-        }
-    }
-
-    // Files dragged from Casier (or any file manager): their paths are typed at the prompt
-    DropArea {
         anchors.fill: stack
-        keys: ["text/uri-list"]
-        onDropped: drop => {
-            if (drop.hasUrls && win.view) {
-                win.view.dropPaths(drop.urls.join("\n"));
-                drop.accept();
-                win.view.forceActiveFocus();
+        z: 40
+        Repeater {
+            model: win.tab ? win.tab.dividerCount : 0
+            Item {
+                id: divider
+                required property int index
+                readonly property var d: win.tab ? win.tab.dividers[index] || null : null
+                readonly property bool across: d !== null && d.dir === "right"
+                readonly property int grab: 7
+                x: d ? (across ? d.x - (grab - FiliTheme.borderWidth) / 2 : d.x) : 0
+                y: d ? (across ? d.y : d.y - (grab - FiliTheme.borderWidth) / 2) : 0
+                width: d ? (across ? grab : d.w) : 0
+                height: d ? (across ? d.h : grab) : 0
+                z: 20
+                Rectangle {
+                    x: divider.across ? (divider.grab - FiliTheme.borderWidth) / 2 : 0
+                    y: divider.across ? 0 : (divider.grab - FiliTheme.borderWidth) / 2
+                    width: divider.across ? FiliTheme.borderWidth : parent.width
+                    height: divider.across ? parent.height : FiliTheme.borderWidth
+                    color: drag.pressed || drag.containsMouse ? FiliTheme.accentColor : FiliTheme.border
+                }
+                MouseArea {
+                    id: drag
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: divider.across ? Qt.SplitHCursor : Qt.SplitVCursor
+                    onPositionChanged: m => {
+                        if (!pressed || !divider.d)
+                            return;
+                        const p = mapToItem(stack, m.x, m.y);
+                        win.tab.setRatio(divider.d, divider.across ? p.x : p.y);
+                    }
+                    // A double click shares the space evenly again
+                    onDoubleClicked: if (divider.d) { divider.d.node.ratio = 0.5; win.tab.layout() }
+                    onReleased: win.tab.focusActive()
+                }
             }
         }
     }
 
-    // Command blocks: actions on the block under the pointer, at the right of its first line (pinned to the top of
-    // the view while that line is scrolled out). Takes no button: clicks and the wheel go on to the terminal.
-    MouseArea {
-        id: blockHover
+    // Over each pane of the tab shown: its scroll bar, files dropped on it, the actions of the command block under the
+    // pointer
+    Item {
         anchors.fill: stack
-        hoverEnabled: true
-        acceptedButtons: Qt.NoButton
-        property var block: null
-        // A link under the pointer with Ctrl held: underlined, hand cursor
-        property bool link: false
-        cursorShape: link ? Qt.PointingHandCursor : Qt.ArrowCursor
-        function look() {
-            const v = win.view;
-            const j = v && containsMouse ? v.blockAt(mouseY) : "";
-            block = j ? JSON.parse(j) : null;
-        }
-        onPositionChanged: mouse => { look(); link = win.view !== null && win.view.linkAt(mouseX, mouseY, (mouse.modifiers & Qt.ControlModifier) !== 0) }
-        onContainsMouseChanged: { look(); if (!containsMouse) { link = false; if (win.view) win.view.linkAt(0, 0, false) } }
-        Connections {
-            target: win.view
-            function onBlocksRevisionChanged() { blockHover.look() }
-            function onScrollOffsetChanged() { blockHover.look() }
-        }
+        z: 30
+        Repeater {
+            model: win.tab ? win.tab.leaves : []
+            Item {
+                id: pane
+                required property var modelData
+                readonly property var v: modelData
+                x: v.x
+                y: v.y
+                width: v.width
+                height: v.height
+                visible: v.visible
 
-        Rectangle {
-            id: blockBar
-            readonly property var b: blockHover.block
-            visible: b !== null && b.state !== "prompt"
-            x: parent.width - width - FiliTheme.space4
-            y: b ? Math.max(b.top - (height - win.fontSize * 1.2) / 2, FiliTheme.space1) : 0
-            width: barRow.width + 2 * FiliTheme.space1
-            height: 28
-            radius: FiliTheme.radiusControl
-            color: FiliTheme.background
-            border.width: FiliTheme.borderWidth
-            border.color: FiliTheme.border
-            Row {
-                id: barRow
-                anchors.centerIn: parent
-                spacing: FiliTheme.space1
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    readonly property var hovered: [copyOut, copyCmd, rerun, edit, files, rob].find(x => x.hovered)
-                    text: hovered ? hovered.tip : blockBar.status()
-                    leftPadding: FiliTheme.space3
-                    rightPadding: FiliTheme.space2
-                    font.family: FiliTheme.font
-                    font.pixelSize: FiliTheme.sizeSmall
-                    color: !hovered && blockBar.b && blockBar.b.exit ? FiliTheme.danger : FiliTheme.textSecondary
+                // Scroll bar of the history: a thin handle at the right edge, shown while scrolling, on hover and when dragged
+                Item {
+                    id: scrollBar
+                    readonly property var v: pane.v
+                    readonly property int history: v ? v.historySize : 0
+                    readonly property int rows: v ? Math.max(1, v.lines) : 1
+                    readonly property real thumbHeight: Math.max(32, Math.min(height, height * rows / (rows + history)))
+                    // 0 at the top of the history, 1 at the prompt
+                    readonly property real fraction: history > 0 ? 1 - v.scrollOffset / history : 1
+                    anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                    width: 14
+                    z: 50
+                    visible: history > 0
+                    Rectangle {
+                        id: thumb
+                        x: parent.width - width - 3
+                        width: grip.containsMouse || grip.drag.active ? 8 : 6
+                        height: scrollBar.thumbHeight
+                        radius: width / 2
+                        color: FiliTheme.alpha(FiliTheme.text, grip.drag.active ? 0.55 : grip.containsMouse ? 0.45 : 0.3)
+                        opacity: grip.containsMouse || grip.drag.active || hold.running ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 180 } }
+                        Behavior on width { NumberAnimation { duration: 100 } }
+                    }
+                    Binding { target: thumb; property: "y"; value: scrollBar.fraction * (scrollBar.height - thumb.height); when: !grip.drag.active }
+                    Timer { id: hold; interval: 700 }
+                    Connections {
+                        target: scrollBar.v
+                        function onScrollOffsetChanged() { hold.restart() }
+                        function onHistorySizeChanged() { hold.restart() }
+                    }
+                    MouseArea {
+                        id: grip
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        drag.target: thumb
+                        drag.axis: Drag.YAxis
+                        drag.minimumY: 0
+                        drag.maximumY: scrollBar.height - thumb.height
+                        function follow(y) {
+                            const span = scrollBar.height - thumb.height;
+                            if (span > 0 && scrollBar.v)
+                                scrollBar.v.scrollToOffset(Math.round((1 - Math.max(0, Math.min(1, y / span))) * scrollBar.history));
+                        }
+                        // A click beside the handle jumps there; the handle then follows the cursor
+                        onPressed: e => { if (e.y < thumb.y || e.y > thumb.y + thumb.height) follow(e.y - thumb.height / 2) }
+                        onPositionChanged: if (grip.drag.active) follow(thumb.y)
+                    }
                 }
-                IconButton {
-                    id: copyOut
-                    readonly property bool hovered: containsMouse
-                    name: "copy"
-                    tip: Aeroport.tr("Copy Output")
-                    enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
-                    onClicked: win.view.copyBlock(blockBar.b.id, 0)
+
+                // Files dragged from Casier (or any file manager): their paths are typed at the prompt
+                DropArea {
+                    anchors.fill: parent
+                    keys: ["text/uri-list"]
+                    onDropped: drop => {
+                        if (drop.hasUrls && pane.v) {
+                            pane.v.dropPaths(drop.urls.join("\n"));
+                            drop.accept();
+                            pane.v.forceActiveFocus();
+                        }
+                    }
                 }
-                IconButton {
-                    id: copyCmd
-                    readonly property bool hovered: containsMouse
-                    name: "terminal"
-                    tip: Aeroport.tr("Copy Command")
-                    onClicked: win.view.copyCommand(blockBar.b.id)
+
+                // Command blocks: actions on the block under the pointer, at the right of its first line (pinned to the top of
+                // the view while that line is scrolled out). Takes no button: clicks and the wheel go on to the terminal.
+                MouseArea {
+                    id: blockHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                    property var block: null
+                    // A link under the pointer with Ctrl held: underlined, hand cursor
+                    property bool link: false
+                    cursorShape: link ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    function look() {
+                        const v = pane.v;
+                        const j = v && containsMouse ? v.blockAt(mouseY) : "";
+                        block = j ? JSON.parse(j) : null;
+                    }
+                    onPositionChanged: mouse => { look(); link = pane.v !== null && pane.v.linkAt(mouseX, mouseY, (mouse.modifiers & Qt.ControlModifier) !== 0) }
+                    onContainsMouseChanged: { look(); if (!containsMouse) { link = false; if (pane.v) pane.v.linkAt(0, 0, false) } }
+                    Connections {
+                        target: pane.v
+                        function onBlocksRevisionChanged() { blockHover.look() }
+                        function onScrollOffsetChanged() { blockHover.look() }
+                    }
+
+                    Rectangle {
+                        id: blockBar
+                        readonly property var b: blockHover.block
+                        visible: b !== null && b.state !== "prompt"
+                        x: parent.width - width - FiliTheme.space4
+                        y: b ? Math.max(b.top - (height - win.fontSize * 1.2) / 2, FiliTheme.space1) : 0
+                        width: barRow.width + 2 * FiliTheme.space1
+                        height: 28
+                        radius: FiliTheme.radiusControl
+                        color: FiliTheme.background
+                        border.width: FiliTheme.borderWidth
+                        border.color: FiliTheme.border
+                        Row {
+                            id: barRow
+                            anchors.centerIn: parent
+                            spacing: FiliTheme.space1
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                readonly property var hovered: [copyOut, copyCmd, rerun, edit, files, rob].find(x => x.hovered)
+                                text: hovered ? hovered.tip : blockBar.status()
+                                leftPadding: FiliTheme.space3
+                                rightPadding: FiliTheme.space2
+                                font.family: FiliTheme.font
+                                font.pixelSize: FiliTheme.sizeSmall
+                                color: !hovered && blockBar.b && blockBar.b.exit ? FiliTheme.danger : FiliTheme.textSecondary
+                            }
+                            IconButton {
+                                id: copyOut
+                                readonly property bool hovered: containsMouse
+                                name: "copy"
+                                tip: Aeroport.tr("Copy Output")
+                                enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
+                                onClicked: pane.v.copyBlock(blockBar.b.id, 0)
+                            }
+                            IconButton {
+                                id: copyCmd
+                                readonly property bool hovered: containsMouse
+                                name: "terminal"
+                                tip: Aeroport.tr("Copy Command")
+                                onClicked: pane.v.copyCommand(blockBar.b.id)
+                            }
+                            IconButton {
+                                id: rerun
+                                readonly property bool hovered: containsMouse
+                                name: "refresh"
+                                tip: Aeroport.tr("Run Again")
+                                enabledState: pane.v !== null && blockBar.b !== null && pane.v.blocksRevision >= 0 && pane.v.canRerun()
+                                onClicked: pane.v.rerunBlock(blockBar.b.id)
+                            }
+                            IconButton {
+                                id: edit
+                                readonly property bool hovered: containsMouse
+                                name: "compose"
+                                tip: Aeroport.tr("Edit Output")
+                                enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
+                                onClicked: pane.v.editBlock(blockBar.b.id)
+                            }
+                            IconButton {
+                                id: files
+                                readonly property bool hovered: containsMouse
+                                name: "folder"
+                                tip: Aeroport.tr("Show in Casier")
+                                onClicked: Aeroport.showInFiles(blockBar.b.cwd)
+                            }
+                            IconButton {
+                                id: rob
+                                readonly property bool hovered: containsMouse
+                                name: "chat"
+                                tip: blockBar.b && blockBar.b.exit ? Aeroport.tr("Ask Rob Why It Failed") : Aeroport.tr("Ask Rob About This Command")
+                                onClicked: win.askRob(blockBar.b.id, pane.v)
+                            }
+                        }
+                        // "Running", "Failed (2) · 3.4 s", "Done · 850 ms"
+                        function status() {
+                            if (!b)
+                                return "";
+                            if (b.state === "running")
+                                return Aeroport.tr("Running");
+                            const parts = [b.exit ? Aeroport.tr("Failed (%1)").replace("%1", b.exit) : Aeroport.tr("Done")];
+                            if (b.duration !== null)
+                                parts.push(Aeroport.duration(b.duration));
+                            return parts.join(" · ");
+                        }
+                    }
                 }
-                IconButton {
-                    id: rerun
-                    readonly property bool hovered: containsMouse
-                    name: "refresh"
-                    tip: Aeroport.tr("Run Again")
-                    enabledState: win.view !== null && blockBar.b !== null && win.view.blocksRevision >= 0 && win.view.canRerun()
-                    onClicked: win.view.rerunBlock(blockBar.b.id)
-                }
-                IconButton {
-                    id: edit
-                    readonly property bool hovered: containsMouse
-                    name: "compose"
-                    tip: Aeroport.tr("Edit Output")
-                    enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
-                    onClicked: win.view.editBlock(blockBar.b.id)
-                }
-                IconButton {
-                    id: files
-                    readonly property bool hovered: containsMouse
-                    name: "folder"
-                    tip: Aeroport.tr("Show in Casier")
-                    onClicked: Aeroport.showInFiles(blockBar.b.cwd)
-                }
-                IconButton {
-                    id: rob
-                    readonly property bool hovered: containsMouse
-                    name: "chat"
-                    tip: blockBar.b && blockBar.b.exit ? Aeroport.tr("Ask Rob Why It Failed") : Aeroport.tr("Ask Rob About This Command")
-                    onClicked: win.askRob(blockBar.b.id)
-                }
-            }
-            // "Running", "Failed (2) · 3.4 s", "Done · 850 ms"
-            function status() {
-                if (!b)
-                    return "";
-                if (b.state === "running")
-                    return Aeroport.tr("Running");
-                const parts = [b.exit ? Aeroport.tr("Failed (%1)").replace("%1", b.exit) : Aeroport.tr("Done")];
-                if (b.duration !== null)
-                    parts.push(Aeroport.duration(b.duration));
-                return parts.join(" · ");
             }
         }
     }
@@ -1188,7 +1356,7 @@ Window {
 
     ContextMenu {
         id: contextMenu
-        onActivated: id => win.herdrMenuAction(id)
+        onActivated: id => win.menuAction(id)
         onVisibleChanged: if (!visible && !namePrompt.visible) win.refocus()
     }
     TextPrompt {

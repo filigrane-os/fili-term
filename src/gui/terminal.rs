@@ -181,6 +181,10 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "commandFinished"]
         fn command_finished(self: Pin<&mut TerminalView>, command: &QString, exit: i32, duration: i32);
+        /// Right click not taken by the program (no mouse reporting, or Shift held): the window opens its menu there
+        #[qsignal]
+        #[cxx_name = "contextRequested"]
+        fn context_requested(self: Pin<&mut TerminalView>, x: f64, y: f64);
 
         #[qinvokable]
         fn copy(self: Pin<&mut TerminalView>);
@@ -2077,7 +2081,9 @@ impl qobject::TerminalView {
         if self.as_mut().report_mouse(mods, &pos, button_code(button), true, false) {
             return;
         }
-        if button == MouseButton::LeftButton {
+        if button == MouseButton::RightButton {
+            self.as_mut().context_requested(pos.x(), pos.y());
+        } else if button == MouseButton::LeftButton {
             let c = self.cell_at(&pos);
             let c = Pos { col: c.col, line: self.abs_line(c.line) };
             let had = self.has_selection;

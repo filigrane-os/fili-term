@@ -45,6 +45,16 @@
 - View > Show Sidebar (Ctrl+Shift+B).
 - Fix: a session hung up by its window (closed tab) left its terminal state in the daemon.
 
+- Panes: every tab is a tree of splits, each pane a terminal with its own session. Split Right (Ctrl+Shift+D),
+  Split Down (Ctrl+Shift+E), Close Pane (Ctrl+Shift+W; Close Tab moves to Ctrl+Alt+Shift+W), Zoom Pane
+  (Ctrl+Shift+Return), move between panes with Ctrl+Alt+arrows, move a divider with Ctrl+Alt+Shift+arrows or by
+  dragging it (double click: even again). The panes without the keyboard are dimmed. A new pane starts in the
+  folder of the active one. mac preset: Cmd+D, Cmd+Shift+D, Cmd+W, Cmd+Option+arrows; tmux preset: prefix %, ",
+  x, z, arrows.
+- Right click in a terminal opens a menu (Copy, Paste, Split Right / Down, Swap Pane, Zoom Pane, Close Pane; the
+  entries of herdr's pane menu in a herdr tab). When the program takes the mouse, Shift+right click opens it.
+- Each pane has its own scroll bar, block hover strip and drop target; search follows the active pane.
+
 ## v2.0.0 (2026-11-12)
 
 - Command blocks: shell integration loaded by the daemon (zsh, bash), OSC 133 marks kept in the grid; hairline,
