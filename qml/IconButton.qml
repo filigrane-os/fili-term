@@ -38,14 +38,15 @@ Rectangle {
         id: tipTimer
         interval: 450
         onTriggered: {
-            const w = Window.window;
+            // The window of the button (the attached property is for an Item: not the Timer's)
+            const w = b.Window.window;
             if (w && w.showTip && b.tip !== "")
                 w.showTip(b, b.hint !== "" ? b.tip + "   " + b.hint : b.tip);
         }
     }
     function hideTip() {
         tipTimer.stop();
-        const w = Window.window;
+        const w = b.Window.window;
         if (w && w.hideTip)
             w.hideTip(b);
     }

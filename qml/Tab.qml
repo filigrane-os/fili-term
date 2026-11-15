@@ -395,7 +395,10 @@ Item {
             // The panes without the keyboard are dimmed, so the eye finds the one that types
             v.opacity = ls.length > 1 && z === null && v !== active ? 0.6 : 1;
         }
-        leaves = ls;
+        // Only when the panes changed: a new array each time is a change the sidebar's bindings would answer with a new
+        // layout (a binding loop)
+        if (leaves.length !== ls.length || ls.some((v, i) => leaves[i] !== v))
+            leaves = ls;
         dividers = z ? [] : ds;
         dividerCount = dividers.length;
     }
