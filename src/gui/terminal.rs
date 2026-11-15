@@ -170,6 +170,10 @@ pub mod qobject {
         #[qproperty(bool, search_active, cxx_name = "searchActive")]
         /// Name of the process in the foreground of the terminal ("zsh" at the prompt, "herdr", "nvim"…)
         #[qproperty(QString, foreground)]
+        /// Right click as herdr's client has it (a tab of herdr): the menu always, even when the program takes the mouse,
+        /// unless the modifiers of passMods are held (herdr's right_click_passthrough_modifier; 0: never)
+        #[qproperty(bool, menu_first, cxx_name = "menuFirst")]
+        #[qproperty(i32, pass_mods, cxx_name = "passMods")]
         type TerminalView = super::TerminalViewRust;
 
         /// The shell ended (status), or the daemon went away (-1)
@@ -658,6 +662,10 @@ pub struct Fonts {
 }
 
 pub struct TerminalViewRust {
+    menu_first: bool,
+    pass_mods: i32,
+    /// The right press opened the menu: its release is not the program's
+    menu_press: bool,
     session_id: i32,
     cwd: QString,
     command: QStringList,
@@ -724,6 +732,9 @@ pub struct TerminalViewRust {
 impl Default for TerminalViewRust {
     fn default() -> Self {
         Self {
+            menu_first: false,
+            pass_mods: 0,
+            menu_press: false,
             session_id: 0,
             cwd: QString::default(),
             command: QStringList::default(),
@@ -2078,6 +2089,14 @@ impl qobject::TerminalView {
                 return;
             }
         }
+        if button == MouseButton::RightButton && self.menu_first {
+            let need = self.pass_mods as u32;
+            if need == 0 || mods & need != need {
+                self.as_mut().rust_mut().menu_press = true;
+                self.as_mut().context_requested(pos.x(), pos.y());
+                return;
+            }
+        }
         if self.as_mut().report_mouse(mods, &pos, button_code(button), true, false) {
             return;
         }
@@ -2150,6 +2169,10 @@ impl qobject::TerminalView {
     unsafe fn mouse_release_event(mut self: Pin<&mut Self>, event: *mut qobject::QMouseEvent) {
         // SAFETY: as above
         let e = unsafe { &*event };
+        if e.button() == MouseButton::RightButton && self.menu_press {
+            self.as_mut().rust_mut().menu_press = false;
+            return;
+        }
         if self.as_mut().report_mouse(mods_of(e.modifiers()), &e.position(), button_code(e.button()), false, false) {
             return;
         }

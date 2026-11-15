@@ -328,7 +328,8 @@ Window {
             if (fresh)
                 t = newTab({ modeTab: w.id });
             const tree = w.layout || w.panes.find(p => p.focused) || w.panes[0] || null;
-            const props = n => ({ cwd: n.cwd || w.cwd, command: modeClient.attachCommand(n.terminal) });
+            // Right click as in herdr's client: its pane menu, or the program with the modifier of its config
+            const props = n => ({ cwd: n.cwd || w.cwd, command: modeClient.attachCommand(n.terminal), menuFirst: true, passMods: modeClient.rightClickPass() });
             if (!t.syncTree(tree, w.pane, w.zoomed === true, props)) {
                 if (fresh)
                     t.destroy();

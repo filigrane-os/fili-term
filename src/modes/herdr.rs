@@ -357,6 +357,37 @@ const KEYS: &[(&str, &str)] = &[
     ("toggle_sidebar", "prefix+b"),
 ];
 
+/// `[ui] right_click_passthrough_modifier` of herdr's config as a Qt modifier mask ("ctrl+alt" → Ctrl|Alt; empty, "off"
+/// or unknown: 0, the menu always; Shift is refused, as herdr does)
+pub fn right_click_pass(config: &str) -> i32 {
+    let mut section = String::new();
+    for line in config.lines() {
+        let line = line.split(" #").next().unwrap_or("").trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.trim_matches(|c| c == '[' || c == ']').trim().to_string();
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        if section != "ui" || k.trim() != "right_click_passthrough_modifier" {
+            continue;
+        }
+        let mut mask = 0;
+        for m in v.trim().trim_matches('"').split('+').map(|m| m.trim().to_ascii_lowercase()) {
+            mask |= match m.as_str() {
+                "ctrl" | "control" => 0x0400_0000,
+                "alt" | "option" => 0x0800_0000,
+                "super" | "cmd" | "meta" => 0x1000_0000,
+                _ => return 0,
+            };
+        }
+        return mask;
+    }
+    0
+}
+
 /// herdr's config file: HERDR_CONFIG_PATH, else config.toml in its folder of the configuration
 pub fn config_path() -> PathBuf {
     if let Some(p) = std::env::var_os("HERDR_CONFIG_PATH").filter(|p| !p.is_empty()) {
@@ -816,6 +847,15 @@ mod tests {
         assert_eq!(find("close_tab"), None);
         assert_eq!(find("previous_tab"), Some(json!(["Ctrl+A, P"])));
         assert_eq!(find("switch_workspace:2"), Some(json!(["Ctrl+A, Shift+2"])));
+    }
+
+    #[test]
+    fn right_click_passthrough() {
+        assert_eq!(right_click_pass(""), 0);
+        assert_eq!(right_click_pass("[ui]\nright_click_passthrough_modifier = \"\"\n"), 0);
+        assert_eq!(right_click_pass("[ui]\nright_click_passthrough_modifier = \"ctrl+alt\"\n"), 0x0c00_0000);
+        assert_eq!(right_click_pass("[ui]\nright_click_passthrough_modifier = \"shift\"\n"), 0);
+        assert_eq!(right_click_pass("[keys]\nright_click_passthrough_modifier = \"alt\"\n"), 0);
     }
 
     #[test]

@@ -43,6 +43,11 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "configPath"]
         fn config_path(self: &ModeClient) -> QString;
+        /// Modifiers (Qt mask) that send a right click to the program instead of the menu, from herdr's
+        /// `[ui] right_click_passthrough_modifier` (0: none, herdr's default)
+        #[qinvokable]
+        #[cxx_name = "rightClickPass"]
+        fn right_click_pass(self: &ModeClient) -> i32;
         #[qinvokable]
         #[cxx_name = "attachCommand"]
         fn attach_command(self: &ModeClient, terminal: &QString) -> QStringList;
@@ -131,6 +136,10 @@ impl qobject::ModeClient {
 
     fn keys_json(&self) -> QString {
         QString::from(&herdr::keys_json(&std::fs::read_to_string(herdr::config_path()).unwrap_or_default()))
+    }
+
+    fn right_click_pass(&self) -> i32 {
+        herdr::right_click_pass(&std::fs::read_to_string(herdr::config_path()).unwrap_or_default())
     }
 
     fn config_path(&self) -> QString {
