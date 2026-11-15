@@ -289,6 +289,16 @@ Window {
         else
             showError(Aeroport.tr("Not in a git repository"));
     }
+    // The command journal (action toggle-journal, `journal = true` in fili-term.toml): a margin at the left of each pane
+    // with the command of each block, its result and its duration, lined up with the block
+    property bool journalOn: {
+        const kept = Aeroport.uiGet("journal");
+        return kept === "" ? settings.journal : kept !== "0";
+    }
+    function toggleJournal() {
+        journalOn = !journalOn;
+        Aeroport.uiSet("journal", journalOn ? "1" : "0");
+    }
     // Typing in every pane of the tab (action broadcast): the footer says so with Stop, the panes have a coloured border
     readonly property bool broadcasting: tab !== null && tab.broadcast
     function toggleBroadcast(on) {
@@ -1340,6 +1350,7 @@ Window {
         else if (name === "next-agent") win.nextAgent();
         else if (name === "commands") win.commandPicker();
         else if (name === "machines") win.machinePicker();
+        else if (name === "toggle-journal") win.toggleJournal();
         else if (name === "broadcast") win.toggleBroadcast();
         else if (name === "new-worktree") { if (v && win.tab && win.tab.modeTab === "") { const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4); win.worktreeNew(p.x, p.y, v.cwd, win.tab.workspace) } }
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
@@ -1441,6 +1452,10 @@ Window {
             property bool declinedSeen: false
             // Name given to the pane (Rename Pane…), shown at its top right when the tab has several
             property string paneName: ""
+            // Width of the journal margin at its left (set by Tab.layout)
+            property real inset: 0
+            // The grid is as wide as the pane again for a program on the alternate screen, and back
+            onAltScreenChanged: if (paneTab) paneTab.layout()
             onScrollbackReady: argv => win.openScrollback(term, argv)
             onTyped: (text, paste) => win.broadcastTyped(term, text, paste)
             // An agent waits for you or finished while nobody looks at its pane: a notification (a click shows the pane)
@@ -1497,6 +1512,7 @@ Window {
         Tab {
             anchors.fill: parent
             maker: termComponent
+            journal: win.journalOn
             onUserFocused: v => win.paneFocused(v)
         }
     }
@@ -1864,6 +1880,68 @@ Window {
                 visible: v.visible
                 // The pane of herdr shown here (its name, its agent)
                 readonly property var info: { win.modeState; return win.herdrPaneOf(v) }
+
+                // The command journal: the margin left of the grid, one entry per block on screen
+                Item {
+                    id: journalMargin
+                    visible: pane.v.inset > 0
+                    x: -pane.v.inset
+                    width: pane.v.inset
+                    height: parent.height
+                    clip: true
+                    readonly property int rowHeight: pane.v.cellHeight
+                    readonly property var entries: { pane.v.blocksRevision; return pane.v.inset > 0 ? JSON.parse(pane.v.journalJson()) : [] }
+                    Rectangle { anchors.fill: parent; color: FiliTheme.backgroundDeep }
+                    Rectangle { anchors { top: parent.top; bottom: parent.bottom; right: parent.right } width: FiliTheme.borderWidth; color: FiliTheme.border }
+                    Repeater {
+                        model: journalMargin.entries
+                        delegate: Item {
+                            id: entry
+                            required property var modelData
+                            // The block's first row, kept at the top while it began above the view (its command stays in sight)
+                            readonly property int first: Math.max(0, modelData.start)
+                            readonly property bool tall: height >= 2 * journalMargin.rowHeight
+                            readonly property bool failed: modelData.state === 2 && modelData.exit !== null && modelData.exit !== 0
+                            y: win.settings.padding + first * journalMargin.rowHeight
+                            width: journalMargin.width - FiliTheme.borderWidth
+                            height: Math.max(journalMargin.rowHeight, (modelData.end - first + 1) * journalMargin.rowHeight)
+                            // The line between two blocks
+                            Rectangle { visible: entry.modelData.start > 0; width: parent.width; height: FiliTheme.borderWidth; color: FiliTheme.alpha(FiliTheme.border, 0.7) }
+                            Row {
+                                id: status
+                                spacing: FiliTheme.space1
+                                anchors { right: parent.right; rightMargin: FiliTheme.space3 }
+                                y: entry.tall ? journalMargin.rowHeight : 0
+                                height: journalMargin.rowHeight
+                                Icon {
+                                    visible: entry.modelData.state === 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    name: entry.failed ? "x" : "check"
+                                    size: 12
+                                    color: entry.failed ? FiliTheme.danger : FiliTheme.textSecondary
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: entry.modelData.state === 1 ? Aeroport.tr("Running")
+                                        : (entry.failed ? entry.modelData.exit + " · " : "") + (entry.modelData.ms !== null ? Aeroport.duration(entry.modelData.ms) : "")
+                                    font.family: FiliTheme.font
+                                    font.pixelSize: FiliTheme.sizeSmall
+                                    color: entry.failed ? FiliTheme.danger : entry.modelData.state === 1 ? FiliTheme.accentColor : FiliTheme.textSecondary
+                                }
+                            }
+                            Text {
+                                anchors { left: parent.left; leftMargin: FiliTheme.space3; right: entry.tall ? parent.right : status.left; rightMargin: FiliTheme.space2 }
+                                height: journalMargin.rowHeight
+                                verticalAlignment: Text.AlignVCenter
+                                text: entry.modelData.command
+                                elide: Text.ElideRight
+                                font.family: FiliTheme.mono
+                                font.pixelSize: FiliTheme.sizeSmall
+                                color: FiliTheme.text
+                            }
+                        }
+                    }
+                }
 
                 // Typing in every pane: a coloured border says which panes get what is typed
                 Rectangle {

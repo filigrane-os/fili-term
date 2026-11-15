@@ -1,11 +1,11 @@
 //! Settings of Aéroport: the plain `key = value` lines at the top of `~/.config/filigrane/fili-term.toml`, before any
 //! section (the sections are the theme, see theme.rs). Every key is optional; the defaults live here. An invalid value
-//! is ignored.
+//! is ignored. (`journal = true` shows the command journal in each pane from the start.)
 use super::theme::{Val, parse_sections};
 
 /// (key, default, smallest, largest)
 const NUMBERS: &[(&str, i64, i64, i64)] = &[("font_size", 12, 6, 48), ("padding", 10, 0, 64), ("line_spacing", 0, 0, 24), ("notify_after", 10, 0, 86400)];
-const SWITCHES: &[(&str, bool)] = &[("window_buttons", true)];
+const SWITCHES: &[(&str, bool)] = &[("window_buttons", true), ("journal", false)];
 /// What a plain `fili-term` does when no window is open: bring back the windows of the last run
 pub const RESTORE: &[&str] = &["always", "never"];
 /// Integrated modes (`[modes]`): what to do when such a program is seen in a tab
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(json_from(""), "{\"font_size\":12,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":true,\"restore\":\"always\",\"modes\":{\"herdr\":\"auto\"}}");
+        assert_eq!(json_from(""), "{\"font_size\":12,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":true,\"journal\":false,\"restore\":\"always\",\"modes\":{\"herdr\":\"auto\"}}");
     }
 
     #[test]
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn top_keys_only_and_valid_values() {
         let text = "font_size = 14 # bigger\npadding = 999\nwindow_buttons = false\n[theme]\nfont_size = 30\n";
-        assert_eq!(json_from(text), "{\"font_size\":14,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":false,\"restore\":\"always\",\"modes\":{\"herdr\":\"auto\"}}");
+        assert_eq!(json_from(text), "{\"font_size\":14,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":false,\"journal\":false,\"restore\":\"always\",\"modes\":{\"herdr\":\"auto\"}}");
     }
 
     #[test]

@@ -25,6 +25,15 @@ Item {
     // terminal attached to one pane: modePane / modeTerminal of the view)
     // Workspace of the tab (a project folder: the git root of its first pane); "" for the tabs of herdr
     property string workspace: ""
+    // The command journal: a margin at the left of each pane (Main.qml draws it), taken from the pane's width
+    property bool journal: false
+    onJournalChanged: layout()
+    function journalInset(v, w) {
+        // None for herdr's panes, for a program on the alternate screen (nvim, htop), or a pane too narrow to spare it
+        if (!journal || modeTab !== "" || v.altScreen || w < 560)
+            return 0;
+        return Math.max(150, Math.min(280, Math.round(w * 0.2)));
+    }
     // Typing in every pane: what is typed in one pane goes to all the others of the tab
     property bool broadcast: false
     property string modeTab: ""
@@ -347,13 +356,19 @@ Item {
         if (!root)
             return;
         const ls = [], ds = [];
+        // A pane in its rectangle, its left side kept for the journal when it is on
+        const put = (v, x, y, w, h) => {
+            const inset = journalInset(v, w);
+            v.inset = inset;
+            v.x = x + inset;
+            v.y = y;
+            v.width = Math.max(1, w - inset);
+            v.height = Math.max(1, h);
+        };
         const place = (n, x, y, w, h) => {
             if (n.view) {
                 ls.push(n.view);
-                n.view.x = x;
-                n.view.y = y;
-                n.view.width = Math.max(1, w);
-                n.view.height = Math.max(1, h);
+                put(n.view, x, y, w, h);
                 return;
             }
             const across = n.dir === "right";
@@ -371,12 +386,8 @@ Item {
         };
         place(root, 0, 0, width, height);
         const z = zoomed !== null && ls.indexOf(zoomed) >= 0 ? zoomed : null;
-        if (z) {
-            z.x = 0;
-            z.y = 0;
-            z.width = width;
-            z.height = height;
-        }
+        if (z)
+            put(z, 0, 0, width, height);
         for (const v of ls) {
             const on = shown && (z === null || v === z);
             v.visible = on;

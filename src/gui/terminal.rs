@@ -176,6 +176,10 @@ pub mod qobject {
         #[qproperty(i32, pass_mods, cxx_name = "passMods")]
         /// The program draws a whole screen on the main one (proto::NEW_PRIMARY_SCREEN): herdr's terminal attach
         #[qproperty(bool, primary_screen, cxx_name = "primaryScreen")]
+        /// A program draws on the alternate screen (nvim, htop…): there are no command blocks then
+        #[qproperty(bool, alt_screen, cxx_name = "altScreen")]
+        /// Height of a row in pixels (the journal lines up with the rows)
+        #[qproperty(i32, cell_height, cxx_name = "cellHeight")]
         /// The AI agent in the foreground ("claude", "codex"…, "" for none: see agents.rs) and its state ("working",
         /// "blocked", "done", "idle"; "" without an agent), updated by agentTick
         #[qproperty(QString, agent)]
@@ -264,6 +268,11 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "sendPasted"]
         fn send_pasted(self: Pin<&mut TerminalView>, text: &QString);
+        /// The command blocks on screen for the journal margin, JSON [{id, start, end, state, exit, ms, command}]; rows
+        /// of the view, start negative when the block began above it
+        #[qinvokable]
+        #[cxx_name = "journalJson"]
+        fn journal_json(self: &TerminalView) -> QString;
         /// Once a second from the window: the agent's state from its screen and output (`watched`: someone looks at
         /// this pane)
         #[qinvokable]
@@ -699,6 +708,8 @@ pub struct Fonts {
 }
 
 pub struct TerminalViewRust {
+    alt_screen: bool,
+    cell_height: i32,
     agent: QString,
     agent_state: QString,
     tracker: super::agents::Tracker,
@@ -839,6 +850,8 @@ impl Default for TerminalViewRust {
             next_request: 1,
             trace: std::env::var_os("FILI_TERM_TRACE").is_some(),
             key_at: None,
+            alt_screen: false,
+            cell_height: 15,
             agent: QString::default(),
             agent_state: QString::default(),
             tracker: Default::default(),
@@ -1402,6 +1415,10 @@ impl qobject::TerminalView {
         if f.offset != self.scroll_offset {
             self.as_mut().set_scroll_offset(f.offset);
         }
+        let alt = f.mode & mode::ALT_SCREEN != 0;
+        if alt != self.alt_screen {
+            self.as_mut().set_alt_screen(alt);
+        }
         if f.history != self.history_size {
             self.as_mut().set_history_size(f.history);
         }
@@ -1482,6 +1499,7 @@ impl qobject::TerminalView {
             let mut r = self.as_mut().rust_mut();
             r.cw = cw;
             r.ch = ch;
+            r.cell_height = ch;
             r.ascent = (ascent + (ch as f64 - height) / 2.0).round() as i32;
             let metrics = qobject::font_metrics_new(&font);
             r.fonts = Some(Fonts { faces: [font, bold, italic, bold_italic], metrics });
@@ -2576,6 +2594,32 @@ impl qobject::TerminalView {
             self.as_mut().set_agent(QString::from(&name));
         }
         self.as_mut().rust_mut().tracker.report(s, Instant::now());
+    }
+
+    fn journal_json(&self) -> QString {
+        let items: Vec<String> = self
+            .shown_blocks
+            .iter()
+            .filter_map(|b| {
+                let info = self.block_info.get(&b.id)?;
+                // The prompt waiting for a command is no entry
+                if info.command.trim().is_empty() {
+                    return None;
+                }
+                let command = info.command.split_whitespace().collect::<Vec<_>>().join(" ");
+                Some(format!(
+                    "{{\"id\":{},\"start\":{},\"end\":{},\"state\":{},\"exit\":{},\"ms\":{},\"command\":{}}}",
+                    b.id,
+                    b.start,
+                    b.end,
+                    info.state,
+                    info.exit.map_or("null".to_string(), |e| e.to_string()),
+                    info.duration.map_or("null".to_string(), |d| d.to_string()),
+                    json_string(&command)
+                ))
+            })
+            .collect();
+        QString::from(&format!("[{}]", items.join(",")))
     }
 
     fn running_command(&self) -> QString {

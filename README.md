@@ -108,6 +108,14 @@ height = "90%"
 The pane menu has a Commands submenu, Ctrl+Alt+P (action `commands`) opens the same list, and
 `fili-term ctl command Lazygit` runs one by name from a script or a launcher.
 
+## Command journal
+
+Ctrl+Alt+J (View > Show Command Journal, or `journal = true` in fili-term.toml) puts a margin at the left of each pane,
+about a fifth of its width. Next to each command block on screen it shows the command typed, a check or a cross with the
+exit code, and how long it took (Running while it runs); a block that began above the view keeps its command at the
+top. What you type and what comes out stay separate without squeezing the output: the grid only loses the margin's
+width. A program on the alternate screen (nvim, htop) takes the whole pane, as does a pane that is too narrow.
+
 ## herdr on another machine
 
 `fili-term mode herdr --remote me@box [--session NAME]` shows the herdr of another machine in the window, as a local one

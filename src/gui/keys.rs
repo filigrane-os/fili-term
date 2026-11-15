@@ -54,6 +54,7 @@ const DEFAULT: &[(&str, &str)] = &[
     ("commands", "Ctrl+Alt+P"),
     ("new-worktree", ""),
     ("broadcast", "Ctrl+Alt+I"),
+    ("toggle-journal", "Ctrl+Alt+J"),
     ("zoom-in", "Ctrl++ | Ctrl+="),
     ("zoom-out", "Ctrl+-"),
     ("zoom-reset", "Ctrl+0"),

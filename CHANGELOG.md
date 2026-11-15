@@ -137,6 +137,16 @@
   private herdr server; `herdr machine list --json` has only been read leniently (list, or object holding a list;
   ssh / target / ssh_target / destination / host, label / name, session), never against a real saved machine.
 
+### V3, part C (continued)
+
+- The command journal (View > Show Command Journal, Ctrl+Alt+J, action toggle-journal; `journal = true` in
+  fili-term.toml): a margin at the left of each pane, about a fifth of its width, that lists the command blocks on
+  screen next to their output: the command, then a check or a cross with the exit code and the duration (Running while
+  it runs), lined up with the block, the command of a block that began above the view kept at the top. The grid keeps
+  the rest of the width, so programs lay themselves out as usual; a program on the alternate screen (nvim, htop) has
+  the whole width, as has a pane narrower than 560 pixels or a pane of herdr. Off by default; the choice made from
+  the menu is kept.
+
 ## v2.0.0 (2026-11-12)
 
 - Command blocks: shell integration loaded by the daemon (zsh, bash), OSC 133 marks kept in the grid; hairline,
