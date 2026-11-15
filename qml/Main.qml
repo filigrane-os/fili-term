@@ -67,7 +67,7 @@ Window {
     property bool showHeader: Aeroport.windowPart("header")
     property bool showFooter: Aeroport.windowPart("footer")
     readonly property bool headerShown: showHeader
-    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || modeNote.flash || asking !== null || error !== "" || resizing
+    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || modeNote.flash || asking !== null || error !== "" || resizing || broadcasting
     Connections {
         target: Aeroport
         function onWindowChanged() {
@@ -289,6 +289,24 @@ Window {
         else
             showError(Aeroport.tr("Not in a git repository"));
     }
+    // Typing in every pane of the tab (action broadcast): the footer says so with Stop, the panes have a coloured border
+    readonly property bool broadcasting: tab !== null && tab.broadcast
+    function toggleBroadcast(on) {
+        const t = tab;
+        if (!t || t.modeTab !== "")
+            return;
+        t.broadcast = on === undefined ? !t.broadcast : on;
+        refocus();
+    }
+    // What was typed in a pane goes to the others of its tab
+    function broadcastTyped(v, text, paste) {
+        const t = v ? v.paneTab : null;
+        if (!t || !t.broadcast)
+            return;
+        for (const o of t.leaves)
+            if (o !== v)
+                paste ? o.sendPasted(text) : o.sendTyped(text);
+    }
     function lastPart(path) {
         const parts = path.split("/").filter(x => x !== "");
         return parts.length ? parts[parts.length - 1] : path;
@@ -477,6 +495,7 @@ Window {
                 { id: "pane:zoom", label: t.zoomed ? Aeroport.tr("Show All Panes") : Aeroport.tr("Zoom Pane"), hint: keyHint("zoom-pane"), enabled: several },
                 { id: "pane:resize-mode", label: Aeroport.tr("Resize Pane"), hint: keyHint("resize-mode"), enabled: several },
                 { id: "pane:edit-scrollback", label: Aeroport.tr("Open History in the Editor"), hint: keyHint("edit-scrollback") },
+                { id: "pane:broadcast", label: Aeroport.tr("Type in Every Pane"), checked: t.broadcast, enabled: t.modeTab === "" && several, hint: keyHint("broadcast") },
                 { id: "pane:commands", label: Aeroport.tr("Commands"), enabled: commands.length > 0, children: commandEntries() },
                 { id: "pane:new-worktree", label: Aeroport.tr("New Tab in Worktree…"), enabled: t.modeTab === "" && Aeroport.isRepo(v.cwd) },
                 { separator: true },
@@ -1253,6 +1272,7 @@ Window {
         else if (name === "edit-scrollback") win.editScrollback();
         else if (name === "next-agent") win.nextAgent();
         else if (name === "commands") win.commandPicker();
+        else if (name === "broadcast") win.toggleBroadcast();
         else if (name === "new-worktree") { if (v && win.tab && win.tab.modeTab === "") { const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4); win.worktreeNew(p.x, p.y, v.cwd, win.tab.workspace) } }
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
@@ -1354,6 +1374,7 @@ Window {
             // Name given to the pane (Rename Pane…), shown at its top right when the tab has several
             property string paneName: ""
             onScrollbackReady: argv => win.openScrollback(term, argv)
+            onTyped: (text, paste) => win.broadcastTyped(term, text, paste)
             // An agent waits for you or finished while nobody looks at its pane: a notification (a click shows the pane)
             onAgentStateChanged: {
                 if ((agentState !== "blocked" && agentState !== "done") || win.watchedPane(term) || !term.paneTab || term.paneTab.modeTab !== "")
@@ -1774,6 +1795,16 @@ Window {
                 // The pane of herdr shown here (its name, its agent)
                 readonly property var info: { win.modeState; return win.herdrPaneOf(v) }
 
+                // Typing in every pane: a coloured border says which panes get what is typed
+                Rectangle {
+                    anchors.fill: parent
+                    visible: win.tab !== null && win.tab.broadcast && win.tab.leaves.length > 1 && !win.tab.zoomed
+                    z: 3
+                    color: "transparent"
+                    border.width: 2
+                    border.color: FiliTheme.warning
+                }
+
                 // Name of a pane of herdr (given in herdr, or its agent's) at its top right, when the tab has several:
                 // it steps aside while the pointer is over it
                 Rectangle {
@@ -2010,24 +2041,24 @@ Window {
         Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: FiliTheme.borderWidth; color: FiliTheme.border }
         Rectangle {
             id: question
-            visible: win.asking !== null || win.error !== "" || win.resizing
+            visible: win.asking !== null || win.error !== "" || win.resizing || win.broadcasting
             anchors { fill: parent; topMargin: FiliTheme.borderWidth }
             z: 5
             color: FiliTheme.backgroundDeep
             Text {
                 anchors { left: parent.left; leftMargin: FiliTheme.margin; right: answers.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
-                text: win.asking ? win.asking.text : win.resizing ? Aeroport.tr("Resizing the pane: arrows or H J K L, Esc when done") : win.error
+                text: win.asking ? win.asking.text : win.resizing ? Aeroport.tr("Resizing the pane: arrows or H J K L, Esc when done") : win.error !== "" ? win.error : Aeroport.tr("Typing in every pane of the tab")
                 elide: Text.ElideRight
                 font.family: FiliTheme.font
                 font.pixelSize: FiliTheme.sizeSmall
-                color: win.asking || win.resizing ? FiliTheme.text : FiliTheme.danger
+                color: win.asking || win.resizing ? FiliTheme.text : win.error === "" ? FiliTheme.warning : FiliTheme.danger
             }
             Row {
                 id: answers
                 anchors { right: parent.right; rightMargin: FiliTheme.margin; verticalCenter: parent.verticalCenter }
                 spacing: FiliTheme.space4
                 Repeater {
-                    model: win.asking ? [{ label: Aeroport.tr("Cancel"), go: false }, { label: win.asking.action, go: true }] : win.resizing ? [{ label: Aeroport.tr("Done"), go: false }] : [{ label: Aeroport.tr("OK"), go: false }]
+                    model: win.asking ? [{ label: Aeroport.tr("Cancel"), go: false }, { label: win.asking.action, go: true }] : win.resizing ? [{ label: Aeroport.tr("Done"), go: false }] : win.error !== "" ? [{ label: Aeroport.tr("OK"), go: false }] : [{ label: Aeroport.tr("Stop"), go: false, stop: true }]
                     Text {
                         required property var modelData
                         anchors.verticalCenter: parent.verticalCenter
@@ -2043,7 +2074,9 @@ Window {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 // Read before the question goes: clearing it destroys this button
-                                const a = win.asking, go = parent.modelData.go;
+                                const a = win.asking, go = parent.modelData.go, stop = parent.modelData.stop === true;
+                                if (stop)
+                                    win.toggleBroadcast(false);
                                 win.resizing = false;
                                 win.asking = null;
                                 win.error = "";

@@ -53,6 +53,7 @@ const DEFAULT: &[(&str, &str)] = &[
     ("new-workspace", ""),
     ("commands", "Ctrl+Alt+P"),
     ("new-worktree", ""),
+    ("broadcast", "Ctrl+Alt+I"),
     ("zoom-in", "Ctrl++ | Ctrl+="),
     ("zoom-out", "Ctrl+-"),
     ("zoom-reset", "Ctrl+0"),
@@ -112,6 +113,7 @@ fn overlay(preset: &str) -> Vec<(String, String)> {
             set("edit-scrollback", "Meta+Alt+Shift+E");
             set("next-agent", "Meta+Alt+A");
             set("commands", "Meta+Alt+P");
+            set("broadcast", "Meta+Alt+I");
             set("next-workspace", "Meta+Alt+PgDown");
             set("previous-workspace", "Meta+Alt+PgUp");
         }
@@ -132,6 +134,7 @@ fn overlay(preset: &str) -> Vec<(String, String)> {
             set("edit-scrollback", "Ctrl+B, E");
             set("next-agent", "Ctrl+B, A");
             set("commands", "Ctrl+B, :");
+            set("broadcast", "Ctrl+B, Shift+S");
             set("next-workspace", "Ctrl+B, )");
             set("previous-workspace", "Ctrl+B, (");
             set("close-window", "Ctrl+B, Shift+X");

@@ -181,5 +181,8 @@
  "Worktrees": "Worktrees",
  "Remove Worktree…": "Supprimer un worktree…",
  "Remove the worktree %1?": "Supprimer le worktree %1 ?",
- "Remove": "Supprimer"
+ "Remove": "Supprimer",
+ "Type in Every Pane": "Taper dans tous les volets",
+ "Typing in every pane of the tab": "Saisie dans tous les volets de l’onglet",
+ "Stop": "Arrêter"
 }

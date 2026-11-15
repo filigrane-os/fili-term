@@ -108,6 +108,13 @@ height = "90%"
 The pane menu has a Commands submenu, Ctrl+Alt+P (action `commands`) opens the same list, and
 `fili-term ctl command Lazygit` runs one by name from a script or a launcher.
 
+## Typing in every pane
+
+Ctrl+Alt+I (Type in Every Pane in the pane menu, tmux prefix+S) sends what you type or paste in a pane of the tab to
+all its other panes too, for the same command on several machines (several SSH sessions in several panes). The panes get
+a coloured border and the footer says so with Stop; it is off by default and per tab, and a pane that gets a paste
+wraps it as its own program asked. Mouse, scrolling and the shell's own answers are not repeated.
+
 ## Worktrees
 
 New Tab in Worktree… (right click on a pane or a tab, or `fili-term ctl worktree BRANCH`) adds a git worktree for a

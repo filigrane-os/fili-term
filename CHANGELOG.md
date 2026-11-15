@@ -124,6 +124,10 @@
   repository's project). The workspace menu lists the project's worktrees to open one in a tab, adds one, and removes
   a linked one (Remove Worktree…, confirmed in the footer; git refuses one with changes and its own message is
   shown). git runs as a program in the background, never through a shell.
+- Type in Every Pane (action broadcast, Ctrl+Alt+I, tmux prefix+S; pane menu, checked while on): what is typed or
+  pasted in a pane of the tab also goes to all the others, so one command runs on several machines at once. The panes
+  have a coloured border and the footer says "Typing in every pane of the tab" with Stop. A paste is wrapped by each
+  receiving pane's own paste mode. Per tab, off by default, not for herdr's tabs.
 
 ## v2.0.0 (2026-11-12)
 

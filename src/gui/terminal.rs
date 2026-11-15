@@ -191,6 +191,10 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "commandFinished"]
         fn command_finished(self: Pin<&mut TerminalView>, command: &QString, exit: i32, duration: i32);
+        /// What the user typed or pasted here (text, and whether it was a paste): the window sends it to the other
+        /// panes of the tab while it types in every pane
+        #[qsignal]
+        fn typed(self: Pin<&mut TerminalView>, text: &QString, paste: bool);
         /// Right click not taken by the program (no mouse reporting, or Shift held): the window opens its menu there
         #[qsignal]
         #[cxx_name = "contextRequested"]
@@ -253,6 +257,13 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "editScrollback"]
         fn edit_scrollback(self: Pin<&mut TerminalView>);
+        /// Text typed (as keys) or pasted (in this terminal's own paste mode) in another pane, sent to this one
+        #[qinvokable]
+        #[cxx_name = "sendTyped"]
+        fn send_typed(self: Pin<&mut TerminalView>, text: &QString);
+        #[qinvokable]
+        #[cxx_name = "sendPasted"]
+        fn send_pasted(self: Pin<&mut TerminalView>, text: &QString);
         /// Once a second from the window: the agent's state from its screen and output (`watched`: someone looks at
         /// this pane)
         #[qinvokable]
@@ -2120,7 +2131,9 @@ impl qobject::TerminalView {
             e.as_mut().ignore();
             return;
         }
-        self.send_input(&out);
+        self.as_mut().send_input(&out);
+        let text = String::from_utf8_lossy(&out).into_owned();
+        self.typed(&QString::from(&text), false);
         e.accept();
     }
 
@@ -2131,6 +2144,7 @@ impl qobject::TerminalView {
         let preedit = e.preedit_string().to_string();
         if !commit.is_empty() {
             self.as_mut().send_input(commit.as_bytes());
+            self.as_mut().typed(&QString::from(&commit), false);
         }
         if self.preedit != preedit {
             self.as_mut().rust_mut().preedit = preedit;
@@ -2217,7 +2231,8 @@ impl qobject::TerminalView {
             let text = clipboard_text(ClipboardMode::Selection);
             if !text.is_empty() {
                 let b = bracketed(&text, self.mode);
-                self.send_input(&b);
+                self.as_mut().send_input(&b);
+                self.typed(&QString::from(&text), true);
             }
         }
     }
@@ -2360,12 +2375,22 @@ impl qobject::TerminalView {
         self.take_selection(TextUse::Clipboard);
     }
 
-    fn paste(self: Pin<&mut Self>) {
+    fn paste(mut self: Pin<&mut Self>) {
         let text = clipboard_text(ClipboardMode::Clipboard);
         if !text.is_empty() {
             let b = bracketed(&text, self.mode);
-            self.send_input(&b);
+            self.as_mut().send_input(&b);
+            self.typed(&QString::from(&text), true);
         }
+    }
+
+    fn send_typed(self: Pin<&mut Self>, text: &QString) {
+        self.send_input(text.to_string().as_bytes());
+    }
+
+    fn send_pasted(self: Pin<&mut Self>, text: &QString) {
+        let b = bracketed(&text.to_string(), self.mode);
+        self.send_input(&b);
     }
 
     fn scroll_page(self: Pin<&mut Self>, direction: i32) {

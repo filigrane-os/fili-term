@@ -25,6 +25,8 @@ Item {
     // terminal attached to one pane: modePane / modeTerminal of the view)
     // Workspace of the tab (a project folder: the git root of its first pane); "" for the tabs of herdr
     property string workspace: ""
+    // Typing in every pane: what is typed in one pane goes to all the others of the tab
+    property bool broadcast: false
     property string modeTab: ""
     property string modeLabel: ""
     property string modeStatus: ""
