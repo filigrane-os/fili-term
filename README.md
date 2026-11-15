@@ -108,6 +108,14 @@ height = "90%"
 The pane menu has a Commands submenu, Ctrl+Alt+P (action `commands`) opens the same list, and
 `fili-term ctl command Lazygit` runs one by name from a script or a launcher.
 
+## Worktrees
+
+New Tab in Worktree… (right click on a pane or a tab, or `fili-term ctl worktree BRANCH`) adds a git worktree for a
+branch beside the repository (`<repo>-<branch>`; the branch when it exists, else a new one) and opens a tab there, in
+the same workspace. The workspace menu (right click on a workspace in the sidebar) lists the project's worktrees to
+open one in a tab, and Remove Worktree… removes a linked one after a confirmation; git never forces it, so one with
+changes stays and git's message says why.
+
 ## Workspaces
 
 Tabs are grouped by project: the workspace of a tab is the git root of its first pane's folder, else the folder. The tab

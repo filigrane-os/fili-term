@@ -32,6 +32,12 @@ pub mod qobject {
         #[qsignal]
         fn command(self: Pin<&mut Aeroport>, name: &QString);
 
+        /// A git worktree operation ended: the token given to it, "add" or "remove", and JSON {ok: true, path} or
+        /// {ok: false, error}
+        #[qsignal]
+        #[cxx_name = "worktreeDone"]
+        fn worktree_done(self: Pin<&mut Aeroport>, token: &QString, op: &QString, json: &QString);
+
         /// Merged theme (defaults of theme.toml, theme.toml of Filigrane, fili-term.toml), as JSON
         #[qinvokable]
         #[cxx_name = "themeJson"]
@@ -107,6 +113,20 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "shortPath"]
         fn short_path(self: &Aeroport, path: &QString) -> QString;
+        /// The git worktrees of the repository holding a folder (JSON [{path, branch, head, main}], main first; "[]"
+        /// outside a repository), and whether a folder is inside one
+        #[qinvokable]
+        fn worktrees(self: &Aeroport, dir: &QString) -> QString;
+        #[qinvokable]
+        #[cxx_name = "isRepo"]
+        fn is_repo(self: &Aeroport, dir: &QString) -> bool;
+        /// Add a worktree for a branch next to the repository, or remove one; the answer comes with worktreeDone(token)
+        #[qinvokable]
+        #[cxx_name = "addWorktree"]
+        fn add_worktree(self: &Aeroport, dir: &QString, branch: &QString, token: &QString);
+        #[qinvokable]
+        #[cxx_name = "removeWorktree"]
+        fn remove_worktree(self: &Aeroport, dir: &QString, path: &QString, token: &QString);
         /// The custom commands of fili-term.toml (`[[commands]]`) as JSON
         #[qinvokable]
         #[cxx_name = "commandsJson"]
@@ -436,6 +456,38 @@ impl qobject::Aeroport {
         QString::from(&format!("[{}]", list.join(",")))
     }
 
+    /// Run a git job off the interface thread (a checkout can take a while) and tell the window when it ends
+    fn worktree_job(&self, token: &QString, op: &'static str, job: impl FnOnce() -> Result<String, String> + Send + 'static) {
+        let qt = self.qt_thread();
+        let token = token.to_string();
+        std::thread::spawn(move || {
+            let q = |s: &str| super::terminal::json_string(s);
+            let json = match job() {
+                Ok(path) => format!("{{\"ok\":true,\"path\":{}}}", q(&path)),
+                Err(e) => format!("{{\"ok\":false,\"error\":{}}}", q(&e)),
+            };
+            let _ = qt.queue(move |f| f.worktree_done(&QString::from(&token), &QString::from(op), &QString::from(&json)));
+        });
+    }
+
+    fn worktrees(&self, dir: &QString) -> QString {
+        QString::from(&super::worktree::list_json(&dir.to_string()))
+    }
+
+    fn is_repo(&self, dir: &QString) -> bool {
+        repo_root_of(&dir.to_string()).is_some()
+    }
+
+    fn add_worktree(&self, dir: &QString, branch: &QString, token: &QString) {
+        let (dir, branch) = (dir.to_string(), branch.to_string());
+        self.worktree_job(token, "add", move || super::worktree::add(&dir, &branch));
+    }
+
+    fn remove_worktree(&self, dir: &QString, path: &QString, token: &QString) {
+        let (dir, path) = (dir.to_string(), path.to_string());
+        self.worktree_job(token, "remove", move || super::worktree::remove(&dir, &path).map(|_| path.clone()));
+    }
+
     fn commands_json(&self) -> QString {
         QString::from(&super::settings::commands_json())
     }
@@ -508,15 +560,31 @@ impl qobject::Aeroport {
 /// The nearest folder up (the folder itself included) that holds `.git` (a folder, or a file for a linked worktree),
 /// else the folder itself; "" gives the home folder
 fn project_root_of(path: &str) -> String {
+    repo_root_of(path).unwrap_or_else(|| if path.is_empty() { home() } else { path.to_string() })
+}
+
+/// The repository holding a folder: the nearest folder up with `.git`. A linked worktree (a `.git` file pointing into
+/// `<repo>/.git/worktrees/…`) belongs to its repository: the tabs of a worktree stay in the workspace of the project.
+fn repo_root_of(path: &str) -> Option<String> {
     let start = if path.is_empty() { home() } else { path.to_string() };
     let mut dir = std::path::Path::new(&start);
     loop {
-        if dir.join(".git").exists() {
-            return dir.to_string_lossy().into_owned();
+        let git = dir.join(".git");
+        if git.exists() {
+            if git.is_file() {
+                let text = std::fs::read_to_string(&git).unwrap_or_default();
+                let target = text.lines().find_map(|l| l.strip_prefix("gitdir:")).map(str::trim).unwrap_or("");
+                if let Some((repo, _)) = target.split_once("/.git/worktrees/") {
+                    if !repo.is_empty() {
+                        return Some(repo.to_string());
+                    }
+                }
+            }
+            return Some(dir.to_string_lossy().into_owned());
         }
         match dir.parent() {
             Some(p) if p != std::path::Path::new("/") && !p.as_os_str().is_empty() => dir = p,
-            _ => return start,
+            _ => return None,
         }
     }
 }

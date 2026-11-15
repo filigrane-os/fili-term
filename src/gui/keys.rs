@@ -52,6 +52,7 @@ const DEFAULT: &[(&str, &str)] = &[
     ("previous-workspace", "Ctrl+Alt+PgUp"),
     ("new-workspace", ""),
     ("commands", "Ctrl+Alt+P"),
+    ("new-worktree", ""),
     ("zoom-in", "Ctrl++ | Ctrl+="),
     ("zoom-out", "Ctrl+-"),
     ("zoom-reset", "Ctrl+0"),

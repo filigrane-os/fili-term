@@ -19,7 +19,7 @@ pub const ACTIONS: &[&str] = &[
     "tab-1", "tab-2", "tab-3", "tab-4", "tab-5", "tab-6", "tab-7", "tab-8", "tab-9", "edit-output",
     "ask-rob", "integrate", "toggle-sidebar", "split-right", "split-down", "close-pane", "zoom-pane", "focus-left",
     "focus-right", "focus-up", "focus-down", "resize-left", "resize-right", "resize-up", "resize-down", "context-menu",
-    "rename-pane", "resize-mode", "edit-scrollback", "next-agent", "next-workspace", "previous-workspace", "new-workspace", "commands",
+    "rename-pane", "resize-mode", "edit-scrollback", "next-agent", "next-workspace", "previous-workspace", "new-workspace", "commands", "new-worktree",
 ];
 
 fn dir() -> Option<PathBuf> {
@@ -51,6 +51,15 @@ fn answer(request: &str) -> (String, Option<String>) {
             ("{\"ok\":false,\"error\":\"usage: command NAME\"}".into(), None)
         } else {
             ("{\"ok\":true}".into(), Some(format!("command\t{}", name.trim())))
+        };
+    }
+    // worktree<TAB>BRANCH: a tab in a worktree of that branch, for the repository of the active pane
+    if verb == "worktree" {
+        let name: String = name.chars().filter(|c| !c.is_control()).take(200).collect();
+        return if name.trim().is_empty() {
+            ("{\"ok\":false,\"error\":\"usage: worktree BRANCH\"}".into(), None)
+        } else {
+            ("{\"ok\":true}".into(), Some(format!("worktree\t{}", name.trim())))
         };
     }
     if verb == "action" && ACTIONS.contains(&name) {
@@ -144,7 +153,7 @@ pub fn report(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-const USAGE: &str = "usage: fili-term ctl [--pid PID] action NAME | command NAME | actions";
+const USAGE: &str = "usage: fili-term ctl [--pid PID] action NAME | command NAME | worktree BRANCH | actions";
 
 /// `fili-term ctl ...` (arguments after `ctl`): prints the JSON answer; Err carries the reason.
 pub fn run(args: &[String]) -> Result<String, String> {
@@ -154,7 +163,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     };
     match rest {
         [verb] if verb == "actions" => Ok(format!("[{}]", ACTIONS.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(","))),
-        [verb, name] if verb == "action" || verb == "command" => {
+        [verb, name] if verb == "action" || verb == "command" || verb == "worktree" => {
             let sock = target(pid).ok_or("no fili-term window")?;
             let mut c = UnixStream::connect(sock).map_err(|e| e.to_string())?;
             c.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -205,6 +214,12 @@ mod tests {
         assert_eq!(reply, "{\"ok\":true}");
         assert_eq!(action.as_deref(), Some("command\tLazygit"));
         assert!(answer("command\t  \n").1.is_none());
+    }
+
+    #[test]
+    fn worktree_by_branch() {
+        assert_eq!(answer("worktree\tfeature/x\n").1.as_deref(), Some("worktree\tfeature/x"));
+        assert!(answer("worktree\t \n").1.is_none());
     }
 
     #[test]

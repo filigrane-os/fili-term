@@ -242,6 +242,57 @@ Window {
         }
         t.split(dir, { cwd: v.cwd, command: [] });
     }
+    // Git worktrees: a tab in a new worktree of the repository (a branch in its own folder beside it), in the same
+    // workspace; the worktrees of a project in the workspace menu, to open or remove one. git runs in the background
+    // (a checkout takes a while) and answers with worktreeDone.
+    property var worktreeJobs: ({})
+    Connections {
+        target: Aeroport
+        function onWorktreeDone(token, op, json) { win.worktreeFinished(token, op, JSON.parse(json)) }
+    }
+    function worktreeJob(job) {
+        const token = Math.random().toString(36).slice(2);
+        worktreeJobs[token] = job;
+        return token;
+    }
+    function worktreeAdd(dir, branch, ws) {
+        Aeroport.addWorktree(dir, branch, worktreeJob({ workspace: ws }));
+    }
+    function worktreeFinished(token, op, r) {
+        const job = worktreeJobs[token];
+        if (!job)
+            return;
+        delete worktreeJobs[token];
+        if (!r.ok)
+            showError(r.error);
+        else if (op === "add")
+            addTab(0, r.path, [], job.workspace);
+    }
+    // Ask for the branch, then add the worktree of the repository holding `dir`
+    function worktreeNew(x, y, dir, ws) {
+        if (!Aeroport.isRepo(dir)) {
+            showError(Aeroport.tr("Not in a git repository"));
+            return;
+        }
+        namePrompt.open(x, y, 260, Aeroport.tr("Branch of the new worktree"), "", branch => {
+            if (branch.trim() !== "")
+                worktreeAdd(dir, branch.trim(), ws);
+        });
+    }
+    // `fili-term ctl worktree BRANCH`: no question asked
+    function runWorktree(branch) {
+        const v = view, t = tab;
+        if (!v || !t || t.modeTab !== "")
+            return;
+        if (Aeroport.isRepo(v.cwd))
+            worktreeAdd(v.cwd, branch, t.workspace);
+        else
+            showError(Aeroport.tr("Not in a git repository"));
+    }
+    function lastPart(path) {
+        const parts = path.split("/").filter(x => x !== "");
+        return parts.length ? parts[parts.length - 1] : path;
+    }
     // Custom commands ([[commands]] of fili-term.toml, read again when the file changes): a key or the Commands menu runs
     // one for the active pane, with FILI_TERM_SESSION and FILI_TERM_CWD naming it
     property var commands: JSON.parse(Aeroport.commandsJson())
@@ -427,6 +478,7 @@ Window {
                 { id: "pane:resize-mode", label: Aeroport.tr("Resize Pane"), hint: keyHint("resize-mode"), enabled: several },
                 { id: "pane:edit-scrollback", label: Aeroport.tr("Open History in the Editor"), hint: keyHint("edit-scrollback") },
                 { id: "pane:commands", label: Aeroport.tr("Commands"), enabled: commands.length > 0, children: commandEntries() },
+                { id: "pane:new-worktree", label: Aeroport.tr("New Tab in Worktree…"), enabled: t.modeTab === "" && Aeroport.isRepo(v.cwd) },
                 { separator: true },
                 { id: "pane:close", label: Aeroport.tr("Close Pane"), hint: keyHint("close-pane") }
             ]);
@@ -842,8 +894,19 @@ Window {
     function nativeSidebarMenu(section, item, x, y) {
         if (section === "workspaces") {
             nativeTarget = { ws: item.id, x: x, y: y };
-            contextMenu.open(x, y, [{ id: "native:rename-workspace", label: Aeroport.tr("Rename Workspace…") }, { separator: true },
-                                    { id: "native:close-workspace", label: Aeroport.tr("Close Workspace") }]);
+            const entries = [{ id: "native:rename-workspace", label: Aeroport.tr("Rename Workspace…") }, { separator: true }];
+            // The worktrees of the project (a repository): open one in a tab, add one, remove one
+            const wts = JSON.parse(Aeroport.worktrees(item.id));
+            if (wts.length > 0) {
+                const name = w => (w.branch !== "" ? w.branch : lastPart(w.path)) + (w.main ? " ·" : "");
+                const linked = wts.filter(w => !w.main);
+                entries.push({ id: "native:worktrees", label: Aeroport.tr("Worktrees"), children: wts.map(w => ({ id: "native:open-wt:" + w.path, label: name(w) })) },
+                             { id: "native:new-worktree-ws", label: Aeroport.tr("New Worktree…") },
+                             { id: "native:remove-worktree", label: Aeroport.tr("Remove Worktree…"), enabled: linked.length > 0, children: linked.map(w => ({ id: "native:remove-wt:" + w.path, label: name(w) })) },
+                             { separator: true });
+            }
+            entries.push({ id: "native:close-workspace", label: Aeroport.tr("Close Workspace") });
+            contextMenu.open(x, y, entries);
         } else if (section === "agents") {
             nativeTarget = { x: x, y: y };
             contextMenu.open(x, y, [{ id: "native:show-agent:" + item.id, label: Aeroport.tr("Show Agent") }]);
@@ -854,6 +917,7 @@ Window {
         const others = nativeWorkspaces.filter(w => w.id !== t.workspace).map(w => ({ id: "native:move-ws:" + w.id, label: workspaceLabel(w.id) }));
         contextMenu.open(x, y, [{ id: "native:new-tab", label: Aeroport.tr("New Tab") },
                                 { id: "native:move", label: Aeroport.tr("Move to Workspace"), children: others.concat([{ id: "native:move-new", label: Aeroport.tr("New Workspace…") }]) },
+                                { id: "native:new-worktree", label: Aeroport.tr("New Tab in Worktree…"), enabled: t.active !== null && Aeroport.isRepo(t.active.cwd) },
                                 { separator: true }, { id: "native:close-tab", label: Aeroport.tr("Close Tab") }]);
     }
     function nativeMenuAction(name) {
@@ -869,6 +933,13 @@ Window {
         } else if (name === "close-workspace") closeWorkspace(m.ws);
         else if (name === "new-tab") addTab(0, m.tab && m.tab.active ? m.tab.active.cwd : cwd, [], m.ws);
         else if (name === "close-tab") closeTab(m.tab, true);
+        else if (name === "new-worktree") worktreeNew(m.x, m.y, m.tab && m.tab.active ? m.tab.active.cwd : m.ws, m.ws);
+        else if (name === "new-worktree-ws") worktreeNew(m.x, m.y, m.ws, m.ws);
+        else if (name.startsWith("open-wt:")) addTab(0, name.slice(8), [], m.ws);
+        else if (name.startsWith("remove-wt:")) {
+            const path = name.slice(10);
+            confirm(Aeroport.tr("Remove the worktree %1?").replace("%1", lastPart(path)), Aeroport.tr("Remove"), () => Aeroport.removeWorktree(m.ws, path, worktreeJob({ remove: path })));
+        }
         else if (name === "move-new") askWorkspaceFolder(m.x, m.y, (dir, root) => moveToWorkspace(m.tab, root));
         else if (name.startsWith("move-ws:")) moveToWorkspace(m.tab, name.slice(8));
         else if (name.startsWith("show-agent:")) showSession(parseInt(name.slice(11)));
@@ -1182,6 +1253,7 @@ Window {
         else if (name === "edit-scrollback") win.editScrollback();
         else if (name === "next-agent") win.nextAgent();
         else if (name === "commands") win.commandPicker();
+        else if (name === "new-worktree") { if (v && win.tab && win.tab.modeTab === "") { const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4); win.worktreeNew(p.x, p.y, v.cwd, win.tab.workspace) } }
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
         else if (name.startsWith("tab-")) { const row = win.rowTabs, n = parseInt(name.slice(4)); const t = row[n === 9 ? row.length - 1 : n - 1]; if (t) win.select(win.tabs.indexOf(t)) }

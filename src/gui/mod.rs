@@ -8,6 +8,7 @@ pub mod mode;
 pub mod settings;
 pub mod terminal;
 pub mod theme;
+pub mod worktree;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 

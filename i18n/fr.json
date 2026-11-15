@@ -175,5 +175,11 @@
  "Not a folder: %1": "Pas un dossier : %1",
  "A pane cannot be added to a herdr tab from here": "Impossible d’ajouter un volet à un onglet herdr d’ici",
  "No custom command: add [[commands]] to fili-term.toml": "Aucune commande personnalisée : ajoutez [[commands]] à fili-term.toml",
- "No command named %1": "Aucune commande nommée %1"
+ "No command named %1": "Aucune commande nommée %1",
+ "New Tab in Worktree…": "Nouvel onglet dans un worktree…",
+ "Not in a git repository": "Pas dans un dépôt git",
+ "Worktrees": "Worktrees",
+ "Remove Worktree…": "Supprimer un worktree…",
+ "Remove the worktree %1?": "Supprimer le worktree %1 ?",
+ "Remove": "Supprimer"
 }

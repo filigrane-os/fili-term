@@ -118,6 +118,12 @@
   of cells). The command sees `FILI_TERM_SESSION` and `FILI_TERM_CWD` (the active pane's). Keys work at once, a
   Commands submenu in the pane menu and the picker Ctrl+Alt+P (action commands, tmux prefix+:) list them,
   `fili-term ctl command NAME` runs one by name (scripts, launchers).
+- Tabs in git worktrees: New Tab in Worktree… (pane menu, tab menu, action new-worktree, `fili-term ctl worktree BRANCH`)
+  asks for a branch and adds a worktree beside the repository, `<repo>-<branch>` (the branch when it exists, else a
+  new one from the current head), then opens a tab there, in the same workspace (a linked worktree belongs to its
+  repository's project). The workspace menu lists the project's worktrees to open one in a tab, adds one, and removes
+  a linked one (Remove Worktree…, confirmed in the footer; git refuses one with changes and its own message is
+  shown). git runs as a program in the background, never through a shell.
 
 ## v2.0.0 (2026-11-12)
 
