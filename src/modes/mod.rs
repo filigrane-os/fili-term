@@ -18,7 +18,7 @@
 //! without herdr's own interface. Actions (JSON from the window): `{"op": "tab", "id"}`, `{"op": "close-tab", "id"}`,
 //! `{"op": "new-tab"}`,
 //! `{"op": "select", "section", "id"}`, `{"op": "new", "section"}`, and herdr's own (herdr.rs: rename, close, split,
-//! swap, worktrees). An action that asks for something gets a reply; a failed one replies `{"op": "error", "message"}`. Notices (a program asks for attention) go to the
+//! swap, worktrees, focus-pane, zoom, resize, ratio). An action that asks for something gets a reply; a failed one replies `{"op": "error", "message"}`. Notices (a program asks for attention) go to the
 //! window, which shows a notification when nobody watches the terminal: `{"kind": "blocked" | "done", "agent", "place"}`.
 
 pub mod herdr;

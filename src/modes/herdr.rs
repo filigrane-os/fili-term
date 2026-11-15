@@ -280,6 +280,14 @@ impl Adapter {
             ("move-tab", _) => ("tab.move", json!({"tab_id": id, "insert_index": a["index"].as_u64().unwrap_or(0)})),
             ("reload-config", _) => ("server.reload_config", json!({})),
             ("swap", _) => ("pane.swap", json!({"source_pane_id": id, "target_pane_id": a["with"]})),
+            // The panes of a tab, as Aéroport lays them out: the keyboard, zoom, a divider moved by keys or dragged
+            ("focus-pane", _) => ("pane.focus", json!({"pane_id": id})),
+            ("zoom", _) => ("pane.zoom", json!({"pane_id": id})),
+            ("resize", _) => ("pane.resize", json!({"pane_id": id, "direction": a["direction"].as_str().unwrap_or("right")})),
+            ("ratio", _) => (
+                "layout.set_split_ratio",
+                json!({"tab_id": id, "path": a["path"], "ratio": a["ratio"].as_f64().unwrap_or(0.5).clamp(0.05, 0.95)}),
+            ),
             ("rename", "agents") => ("agent.rename", json!({"target": id, "name": label()})),
             (op, section) => return Err(format!("unknown action {op} {section}")),
         };
@@ -341,6 +349,11 @@ const KEYS: &[(&str, &str)] = &[
     ("split_vertical", "prefix+v"),
     ("split_horizontal", "prefix+minus"),
     ("close_pane", "prefix+x"),
+    ("zoom", "prefix+z"),
+    ("resize_pane_left", ""),
+    ("resize_pane_down", ""),
+    ("resize_pane_up", ""),
+    ("resize_pane_right", ""),
     ("toggle_sidebar", "prefix+b"),
 ];
 
@@ -454,6 +467,10 @@ pub fn keys_json(config: &str) -> String {
         }
     }
     let prefix = set.get("prefix").cloned().unwrap_or_else(|| "ctrl+b".into());
+    // `fullscreen` is herdr's older name of `zoom`
+    if let Some(f) = set.get("fullscreen").cloned() {
+        set.entry("zoom".into()).or_insert(f);
+    }
     let mut out: Vec<Value> = Vec::new();
     for (action, default) in KEYS {
         let binding = set.get(*action).cloned().unwrap_or_else(|| default.to_string());
@@ -530,6 +547,59 @@ fn socket_path(args: &[String], env: &HashMap<String, String>) -> Option<PathBuf
         Some(name) => config.join("sessions").join(name).join("herdr.sock"),
         None => config.join("herdr.sock"),
     })
+}
+
+/// A tab's layout as a tree for the window: a split {dir, ratio, path, a, b} (path: the booleans herdr's
+/// layout.set_split_ratio wants, true for the second child) or a pane (one of `items`, with its terminal). herdr gives
+/// the splits flat, named split_<n>_<path> ("root" for the top one, "0"/"1" per level), and the panes by rectangle:
+/// a pane goes where the middle of its rectangle falls.
+fn layout_tree(layout: &Value, items: &[Value]) -> Value {
+    let empty = Vec::new();
+    let mut splits: HashMap<String, &Value> = HashMap::new();
+    for sp in layout["splits"].as_array().unwrap_or(&empty) {
+        let id = sp["id"].as_str().unwrap_or("");
+        let path = id.rsplit('_').next().unwrap_or("");
+        splits.insert(if path == "root" { String::new() } else { path.to_string() }, sp);
+    }
+    let rects: Vec<(&str, f64, f64)> = layout["panes"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|p| {
+            let r = &p["rect"];
+            let mid = |a: &str, b: &str| r[a].as_f64().unwrap_or(0.0) + r[b].as_f64().unwrap_or(0.0) / 2.0;
+            Some((p["pane_id"].as_str()?, mid("x", "width"), mid("y", "height")))
+        })
+        .collect();
+    let item = |id: &str| items.iter().find(|i| i["id"] == id).cloned().unwrap_or_else(|| json!({"id": id}));
+    // The region of a path: its rectangle cut by the splits above it
+    fn build(
+        path: &str, x: f64, y: f64, w: f64, h: f64, splits: &HashMap<String, &Value>, rects: &[(&str, f64, f64)],
+        item: &dyn Fn(&str) -> Value,
+    ) -> Value {
+        if let Some(sp) = splits.get(path) {
+            let ratio = sp["ratio"].as_f64().unwrap_or(0.5);
+            let dir = sp["direction"].as_str().unwrap_or("right");
+            let bools: Vec<bool> = path.chars().map(|c| c == '1').collect();
+            let (a, b) = if dir == "right" {
+                let cut = w * ratio;
+                (build(&format!("{path}0"), x, y, cut, h, splits, rects, item), build(&format!("{path}1"), x + cut, y, w - cut, h, splits, rects, item))
+            } else {
+                let cut = h * ratio;
+                (build(&format!("{path}0"), x, y, w, cut, splits, rects, item), build(&format!("{path}1"), x, y + cut, w, h - cut, splits, rects, item))
+            };
+            return json!({"dir": dir, "ratio": ratio, "path": bools, "a": a, "b": b});
+        }
+        let inside = |(_, mx, my): &&(&str, f64, f64)| *mx >= x && *mx < x + w && *my >= y && *my < y + h;
+        match rects.iter().find(inside) {
+            Some((id, _, _)) => item(id),
+            None => Value::Null,
+        }
+    }
+    let area = &layout["area"];
+    let f = |k: &str| area[k].as_f64().unwrap_or(0.0);
+    let tree = build("", f("x"), f("y"), f("width").max(1.0), f("height").max(1.0), &splits, &rects, &item);
+    if tree.is_null() { items.first().cloned().unwrap_or(Value::Null) } else { tree }
 }
 
 fn panes_of(snap: &Value) -> BTreeSet<String> {
@@ -617,11 +687,14 @@ fn state_of(snap: &Value, before: Option<&HashMap<String, String>>) -> (String, 
                 })
                 .collect();
             let main = panes.get(focused);
+            let tree = layout.map_or(Value::Null, |l| layout_tree(l, &pane_items));
             json!({
                 "id": id, "label": text(&t["label"]).map_or_else(|| t["number"].to_string(), str::to_string),
                 "active": id == active_tab, "status": t["agent_status"],
                 "pane": focused, "terminal": main.map_or(Value::Null, |p| p["terminal_id"].clone()),
                 "cwd": main.and_then(|p| p["foreground_cwd"].as_str().or_else(|| p["cwd"].as_str())).unwrap_or(""),
+                "zoomed": layout.and_then(|l| l["zoomed"].as_bool()).unwrap_or(false),
+                "layout": tree,
                 "panes": pane_items,
             })
         })
@@ -743,6 +816,30 @@ mod tests {
         assert_eq!(find("close_tab"), None);
         assert_eq!(find("previous_tab"), Some(json!(["Ctrl+A, P"])));
         assert_eq!(find("switch_workspace:2"), Some(json!(["Ctrl+A, Shift+2"])));
+    }
+
+    #[test]
+    fn layout_as_a_tree() {
+        // As herdr 0.9.5 gives it: p1 | (p2 / (p3 | p4))
+        let layout: Value = serde_json::from_str(r#"{"area":{"x":0,"y":0,"width":120,"height":40},"zoomed":false,"focused_pane_id":"p3",
+            "panes":[{"pane_id":"p1","rect":{"x":0,"y":0,"width":60,"height":40}},{"pane_id":"p2","rect":{"x":60,"y":0,"width":60,"height":20}},
+                     {"pane_id":"p3","rect":{"x":60,"y":20,"width":30,"height":20}},{"pane_id":"p4","rect":{"x":90,"y":20,"width":30,"height":20}}],
+            "splits":[{"id":"split_0_root","direction":"right","ratio":0.5,"rect":{}},{"id":"split_1_1","direction":"down","ratio":0.5,"rect":{}},
+                      {"id":"split_2_11","direction":"right","ratio":0.5,"rect":{}}]}"#).unwrap();
+        let items: Vec<Value> = ["p1", "p2", "p3", "p4"].iter().map(|p| json!({"id": p, "terminal": format!("t{p}")})).collect();
+        let t = layout_tree(&layout, &items);
+        assert_eq!(t["dir"], "right");
+        assert_eq!(t["path"], json!([]));
+        assert_eq!(t["a"]["id"], "p1");
+        assert_eq!(t["b"]["dir"], "down");
+        assert_eq!(t["b"]["path"], json!([true]));
+        assert_eq!(t["b"]["a"]["id"], "p2");
+        assert_eq!(t["b"]["b"]["path"], json!([true, true]));
+        assert_eq!(t["b"]["b"]["a"]["terminal"], "tp3");
+        assert_eq!(t["b"]["b"]["b"]["id"], "p4");
+        // One pane, no split
+        let one: Value = serde_json::from_str(r#"{"area":{"x":0,"y":0,"width":80,"height":24},"panes":[{"pane_id":"p1","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}"#).unwrap();
+        assert_eq!(layout_tree(&one, &items[..1])["id"], "p1");
     }
 
     #[test]

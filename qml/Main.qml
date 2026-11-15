@@ -114,6 +114,11 @@ Window {
         const t = v ? v.paneTab : null;
         if (!t)
             return;
+        // A pane of herdr closes in herdr; the next state takes it away
+        if (hangUp && t.modeTab !== "" && v.modePane !== "" && modeState) {
+            modeAct({ op: "close", section: "panes", id: v.modePane });
+            return;
+        }
         if (t.leaves.length <= 1) {
             closeTab(t, hangUp);
             return;
@@ -127,7 +132,50 @@ Window {
     // The pane of herdr shown in a tab of herdr (null outside)
     function herdrPane(t) {
         const info = t && t.modeTab !== "" && modeState ? modeState.tabs.find(x => x.id === t.modeTab) : null;
-        return info ? info.panes.find(p => p.terminal === t.modeTerminal) || null : null;
+        const id = t && t.active ? t.active.modePane : "";
+        return info ? info.panes.find(p => p.id === id) || null : null;
+    }
+    // A pane took the keyboard in a tab of herdr: herdr's focus follows (its agents, its keys act there)
+    function paneFocused(v) {
+        const t = v ? v.paneTab : null;
+        if (!t || t.modeTab === "" || syncing || v.modePane === "" || !modeState)
+            return;
+        const info = modeState.tabs.find(x => x.id === t.modeTab);
+        if (info && info.pane !== v.modePane)
+            modeAct({ op: "focus-pane", id: v.modePane });
+    }
+    // Exchange the active pane with its neighbour in a direction (in herdr for a tab of herdr)
+    function swapPane(dir) {
+        const t = tab;
+        const o = t && t.active ? t.neighbour(t.active, dir) : null;
+        if (!o)
+            return;
+        if (t.modeTab !== "")
+            modeAct({ op: "swap", id: t.active.modePane, with: o.modePane });
+        else
+            t.swap(dir);
+    }
+    // Pane actions of the menu and the keys: herdr does them in its tabs, the tab itself elsewhere
+    function paneAction(name) {
+        const t = tab, v = view;
+        if (!t || !v)
+            return;
+        const herdr = t.modeTab !== "" && v.modePane !== "" && modeState !== null;
+        if (name === "zoom") {
+            if (herdr) modeAct({ op: "zoom", id: v.modePane }); else t.toggleZoom();
+        } else if (name.startsWith("focus-")) {
+            // Moving out of a zoomed pane shows them all again, as in herdr
+            if (herdr && t.zoomed) modeAct({ op: "zoom", id: v.modePane });
+            t.focusTowards(name.slice(6));
+        } else if (name.startsWith("resize-")) {
+            if (herdr) modeAct({ op: "resize", id: v.modePane, direction: name.slice(7) }); else t.resize(name.slice(7), 3 * win.fontSize);
+        }
+    }
+    // A divider let go (or reset by a double click): herdr keeps the new ratio of its tab
+    function dividerMoved(d) {
+        const t = tab;
+        if (t && t.modeTab !== "" && d && d.node.path !== undefined)
+            modeAct({ op: "ratio", id: t.modeTab, path: d.node.path, ratio: d.node.ratio });
     }
     // Split the pane with the keyboard: a shell in the same folder, right of it or below; in a tab of herdr, herdr splits
     function split(dir) {
@@ -149,12 +197,11 @@ Window {
         const p = mapFromItem(v, x, y);
         let entries = [{ id: "pane:copy", label: Aeroport.tr("Copy"), hint: keyHint("copy") },
                        { id: "pane:paste", label: Aeroport.tr("Paste"), hint: keyHint("paste") }, { separator: true }];
-        if (t.modeTab !== "") {
-            const hp = herdrPane(t);
-            menuTarget = { section: "panes", item: hp, x: p.x, y: p.y };
-            if (hp)
-                entries = entries.concat(herdrEntries("panes", hp));
-        } else {
+        // In a tab of herdr, herdr's names of panes first
+        const hp = herdrPane(t);
+        if (hp)
+            entries = entries.concat([{ id: "rename-pane", label: Aeroport.tr("Rename Pane…") }, { id: "clear-pane-name", label: Aeroport.tr("Clear Pane Name") }, { separator: true }]);
+        {
             const several = t.leaves.length > 1;
             const swaps = ["left", "right", "up", "down"].map(d => ({ id: "pane:swap-" + d, label: Aeroport.tr(swapLabels[d]), enabled: t.neighbour(v, d) !== null }));
             entries = entries.concat([
@@ -166,7 +213,7 @@ Window {
                 { separator: true },
                 { id: "pane:close", label: Aeroport.tr("Close Pane"), hint: keyHint("close-pane") }
             ]);
-            menuTarget = { section: "pane", item: null, x: p.x, y: p.y };
+            menuTarget = { section: hp ? "panes" : "pane", item: hp, x: p.x, y: p.y };
         }
         contextMenu.open(p.x, p.y, entries);
     }
@@ -178,7 +225,7 @@ Window {
         }
         const name = id.slice(5);
         if (name.startsWith("swap-")) {
-            if (tab) tab.swap(name.slice(5));
+            swapPane(name.slice(5));
         } else if (name === "zoom") {
             run("zoom-pane");
         } else if (name === "close") {
@@ -274,22 +321,20 @@ Window {
         let list = tabs.slice();
         const made = [];
         for (const w of want) {
+            // The panes of herdr's tab laid out as herdr has them, each attached to its terminal
             let t = list.find(x => x.modeTab === w.id);
-            const chosen = t && t.modePane !== "" ? w.panes.find(p => p.id === t.modePane) : null;
-            const pane = chosen || w.panes.find(p => p.focused) || w.panes[0];
-            const terminal = pane ? pane.terminal : w.terminal;
-            if (!terminal)
+            const fresh = !t;
+            if (fresh)
+                t = newTab({ modeTab: w.id });
+            const tree = w.layout || w.panes.find(p => p.focused) || w.panes[0] || null;
+            const props = n => ({ cwd: n.cwd || w.cwd, command: modeClient.attachCommand(n.terminal) });
+            if (!t.syncTree(tree, w.pane, w.zoomed === true, props)) {
+                if (fresh)
+                    t.destroy();
                 continue;
-            const props = { cwd: pane ? pane.cwd : w.cwd, command: modeClient.attachCommand(terminal) };
-            if (t && t.modeTerminal !== terminal) {
-                // Another pane: a new attachment in the same tab
-                t.modeTerminal = terminal;
-                t.resetTo(props);
-            } else if (!t) {
-                t = newTab({ modeTab: w.id, modeTerminal: terminal });
-                t.start(props);
-                list.push(t);
             }
+            if (fresh)
+                list.push(t);
             t.modeLabel = w.label;
             t.modeStatus = w.status || "";
             made.push(t);
@@ -341,16 +386,13 @@ Window {
         }
         return out;
     }
-    // Sidebar: herdr's sections (agents sorted), then the panes of the tab shown when it has several
+    // Sidebar: herdr's sections, agents sorted (the panes are in the tab itself)
     readonly property var sidebarModel: {
         if (!modeState)
             return null;
         const v = tab;
         const sections = modeState.sections.map(sec => sec.key !== "agents" ? sec
             : Object.assign({}, sec, { items: sortedAgents(sec.items), choice: agentsSort === "priority" ? Aeroport.tr("Priority") : Aeroport.tr("Grouped") }));
-        const w = v && v.modeTab !== "" ? modeState.tabs.find(x => x.id === v.modeTab) : null;
-        if (w && w.panes.length > 1)
-            sections.push({ key: "panes", title: "Panes", add: false, items: w.panes.map(p => ({ id: p.id, label: p.label, detail: "", status: p.status, active: p.terminal === v.modeTerminal, focused: p.focused })) });
         return Object.assign({}, modeState, { sections: sections });
     }
 
@@ -460,15 +502,12 @@ Window {
         const here = herdrTabs.indexOf(v);
         const spaces = modeSection("workspaces"), agents = modeSection("agents");
         const space = spaces.find(w => w.active) || null;
-        const tabInfo = modeState.tabs.find(t => t.id === v.modeTab);
-        const panes = tabInfo ? tabInfo.panes : [];
-        const pane = panes.find(x => x.terminal === v.modeTerminal) || null;
+        const pane = herdrPane(v);
         // An entry of a context menu, on an item, at the top left of the terminal
         const menuOn = (section, item, id) => { if (item) { menuTarget = { section: section, item: item, x: p.x, y: p.y }; herdrMenuAction(id) } };
         const showTab = t => { if (t) select(tabs.indexOf(t)) };
         const showSpace = w => { if (w) modeAct({ op: "select", section: "workspaces", id: w.id }) };
         const showAgent = a => { if (a) modeAct({ op: "select", section: "agents", id: a.id }) };
-        const showPane = x => { if (x) { v.modePane = x.id; syncMode() } };
         const stepIn = (list, i, d) => list.length ? list[(i + d + list.length) % list.length] : null;
         if (action === "settings") Qt.openUrlExternally("file://" + modeClient.configPath());
         else if (action === "detach") modeClient.stop();
@@ -498,12 +537,14 @@ Window {
         else if (action === "switch_tab") showTab(herdrTabs[n - 1]);
         else if (action === "close_tab") modeAct({ op: "close-tab", id: v.modeTab });
         else if (action === "rename_pane") menuOn("panes", pane, "rename-pane");
-        // Aéroport shows one pane of a tab: the directions go through them in their order
-        else if (action === "cycle_pane_next" || action === "focus_pane_right" || action === "focus_pane_down") showPane(stepIn(panes, panes.indexOf(pane), 1));
-        else if (action === "cycle_pane_previous" || action === "focus_pane_left" || action === "focus_pane_up" || action === "last_pane") showPane(stepIn(panes, panes.indexOf(pane), -1));
-        else if (action === "split_vertical") menuOn("panes", pane, "split-right");
-        else if (action === "split_horizontal") menuOn("panes", pane, "split-down");
-        else if (action === "close_pane") menuOn("panes", pane, "close-pane");
+        else if (action === "cycle_pane_next") v.cycle(1);
+        else if (action === "cycle_pane_previous" || action === "last_pane") v.cycle(-1);
+        else if (action.startsWith("focus_pane_")) paneAction("focus-" + action.slice(11));
+        else if (action.startsWith("resize_pane_")) paneAction("resize-" + action.slice(12));
+        else if (action === "zoom") paneAction("zoom");
+        else if (action === "split_vertical") split("right");
+        else if (action === "split_horizontal") split("down");
+        else if (action === "close_pane") closePane(view, true);
         else if (action === "toggle_sidebar") toggleSidebar();
     }
 
@@ -581,9 +622,8 @@ Window {
         else if (name === "close-pane") { if (v) win.closePane(v, true) }
         else if (name === "split-right") win.split("right");
         else if (name === "split-down") win.split("down");
-        else if (name === "zoom-pane") { if (win.tab) win.tab.toggleZoom() }
-        else if (name.startsWith("focus-")) { if (win.tab) win.tab.focusTowards(name.slice(6)) }
-        else if (name.startsWith("resize-")) { if (win.tab) win.tab.resize(name.slice(7), 3 * win.fontSize) }
+        else if (name === "zoom-pane") win.paneAction("zoom");
+        else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
         else if (name.startsWith("tab-")) { const n = parseInt(name.slice(4)); win.select(n === 9 ? win.tabs.length - 1 : n - 1) }
         else if (name === "next-tab") win.step(1);
@@ -632,6 +672,9 @@ Window {
             id: term
             // The tab (Tab.qml) whose tree holds this pane
             property var paneTab: null
+            // In a tab of herdr: the terminal of herdr attached here and its pane
+            property string modeTerminal: ""
+            property string modePane: ""
             // The user said "Not Now" to the offer: not asked again while the program stays in the foreground
             property string declined: ""
             onForegroundChanged: {
@@ -669,6 +712,7 @@ Window {
         Tab {
             anchors.fill: parent
             maker: termComponent
+            onUserFocused: v => win.paneFocused(v)
         }
     }
 
@@ -832,11 +876,7 @@ Window {
         width: visible ? FiliTheme.sidebarWidth : 0
         mode: win.sidebarModel
         onActivated: (section, id) => {
-            if (section === "panes") {
-                if (win.tab) { win.tab.modePane = id; win.syncMode() }
-            } else {
-                win.modeAct({ op: "select", section: section, id: id });
-            }
+            win.modeAct({ op: "select", section: section, id: id });
             win.refocus();
         }
         onAdded: section => { win.modeAct({ op: "new", section: section }); win.refocus() }
@@ -980,8 +1020,9 @@ Window {
                         win.tab.setRatio(divider.d, divider.across ? p.x : p.y);
                     }
                     // A double click shares the space evenly again
-                    onDoubleClicked: if (divider.d) { divider.d.node.ratio = 0.5; win.tab.layout() }
-                    onReleased: win.tab.focusActive()
+                    onDoubleClicked: if (divider.d) { divider.d.node.ratio = 0.5; win.tab.layout(); win.dividerMoved(divider.d) }
+                    onPressed: win.tab.dragging = true
+                    onReleased: { win.tab.dragging = false; win.dividerMoved(divider.d); win.tab.focusActive() }
                 }
             }
         }

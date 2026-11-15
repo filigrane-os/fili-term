@@ -21,13 +21,15 @@ Item {
     // Result of a command that ended while this tab was not shown, until the tab is selected
     property bool unseen: false
     property int lastExit: 0
-    // A tab of herdr: its tab id, the terminal attached, the pane chosen in the sidebar ("" the focused one), its label
-    // and the status of its agents
+    // A tab of herdr: its tab id, its label and the status of its agents (its panes come from herdr's layout, each
+    // terminal attached to one pane: modePane / modeTerminal of the view)
     property string modeTab: ""
-    property string modeTerminal: ""
-    property string modePane: ""
     property string modeLabel: ""
     property string modeStatus: ""
+    // A divider is being dragged: the ratios herdr sends meanwhile do not move it back
+    property bool dragging: false
+    // The user gave the keyboard to another pane (click, keys): herdr's focus follows in a tab of herdr
+    signal userFocused(var view)
 
     // Thickness of a divider line, and the smallest pane (pixels) a drag or a resize leaves
     readonly property int line: FiliTheme.borderWidth
@@ -48,18 +50,6 @@ Item {
         layout();
         return v;
     }
-    // Another program in place of every pane (a tab of herdr attached to another terminal)
-    function resetTo(props) {
-        const focused = active !== null && active.activeFocus;
-        for (const v of leaves) {
-            v.closeSession();
-            v.destroy();
-        }
-        zoomed = null;
-        start(props);
-        if (focused)
-            focusActive();
-    }
     function closeAll() {
         for (const v of leaves)
             v.closeSession();
@@ -78,6 +68,7 @@ Item {
             return;
         active = v;
         layout();
+        userFocused(v);
     }
 
     // The node holding a terminal and its parent split
@@ -165,11 +156,70 @@ Item {
         zoomed = null;
         layout();
         const o = neighbour(active, dir);
-        if (o) {
-            active = o;
-            layout();
+        if (o)
             o.forceActiveFocus();
+    }
+    // The next or previous pane in reading order
+    function cycle(delta) {
+        const i = leaves.indexOf(active);
+        if (i >= 0 && leaves.length > 1)
+            leaves[(i + delta + leaves.length) % leaves.length].forceActiveFocus();
+    }
+
+    // The panes of a tab of herdr from herdr's layout: a tree of {dir, ratio, path, a, b} and panes {id, terminal, cwd};
+    // the terminals already attached stay, the new panes get one (props(pane) gives its properties), the gone ones end.
+    // focusedPane takes the keyboard, zoomedTab shows it alone.
+    function syncTree(tree, focusedPane, zoomedTab, props) {
+        const old = {};
+        for (const v of leaves)
+            old[v.modeTerminal] = v;
+        const ratios = {};
+        const keep = n => {
+            if (n && !n.view) {
+                ratios[JSON.stringify(n.path || [])] = n.ratio;
+                keep(n.a);
+                keep(n.b);
+            }
+        };
+        if (dragging)
+            keep(root);
+        const used = [];
+        const build = n => {
+            if (!n)
+                return null;
+            if (n.dir) {
+                const a = build(n.a), b = build(n.b);
+                if (!a || !b)
+                    return a || b;
+                const k = JSON.stringify(n.path || []);
+                return { dir: n.dir, ratio: k in ratios ? ratios[k] : n.ratio, path: n.path || [], a: a, b: b };
+            }
+            if (!n.terminal)
+                return null;
+            let v = old[n.terminal];
+            if (!v)
+                v = newView(Object.assign(props(n), { modeTerminal: n.terminal }));
+            v.modePane = n.id;
+            used.push(v);
+            return { view: v };
+        };
+        const next = build(tree);
+        if (!next)
+            return false;
+        const hadFocus = active !== null && active.activeFocus;
+        for (const k of Object.keys(old)) {
+            if (used.indexOf(old[k]) < 0) {
+                old[k].closeSession();
+                old[k].destroy();
+            }
         }
+        root = next;
+        active = used.find(v => v.modePane === focusedPane) || used[0];
+        zoomed = zoomedTab && used.length > 1 ? active : null;
+        layout();
+        if (hadFocus)
+            focusActive();
+        return true;
     }
     // Exchange the active pane with its neighbour in a direction; the keyboard stays with the same terminal
     function swap(dir) {
