@@ -18,7 +18,7 @@ pub const ACTIONS: &[&str] = &[
     "find", "find-next", "find-previous", "show-in-files",
     "tab-1", "tab-2", "tab-3", "tab-4", "tab-5", "tab-6", "tab-7", "tab-8", "tab-9", "edit-output",
     "ask-rob", "integrate", "toggle-sidebar", "split-right", "split-down", "close-pane", "zoom-pane", "focus-left",
-    "focus-right", "focus-up", "focus-down", "resize-left", "resize-right", "resize-up", "resize-down",
+    "focus-right", "focus-up", "focus-down", "resize-left", "resize-right", "resize-up", "resize-down", "context-menu",
 ];
 
 fn dir() -> Option<PathBuf> {

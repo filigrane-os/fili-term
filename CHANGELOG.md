@@ -53,6 +53,7 @@
   x, z, arrows.
 - Right click in a terminal opens a menu (Copy, Paste, Split Right / Down, Swap Pane, Zoom Pane, Close Pane; the
   entries of herdr's pane menu in a herdr tab). When the program takes the mouse, Shift+right click opens it.
+  The Menu key or Shift+F10 opens it from the keyboard (action context-menu).
 - Each pane has its own scroll bar, block hover strip and drop target; search follows the active pane.
 
 - herdr tabs show all their panes, laid out as herdr has them (splits and ratios from its layout), each pane attached

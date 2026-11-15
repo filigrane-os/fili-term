@@ -194,7 +194,8 @@ Window {
     // and in a tab of herdr the entries of herdr's pane menu
     function paneMenu(v, x, y) {
         const t = v.paneTab;
-        const p = mapFromItem(v, x, y);
+        // Window coordinates (the window itself is no Item: it has no mapFromItem)
+        const p = v.mapToItem(null, x, y);
         let entries = [{ id: "pane:copy", label: Aeroport.tr("Copy"), hint: keyHint("copy") },
                        { id: "pane:paste", label: Aeroport.tr("Paste"), hint: keyHint("paste") }, { separator: true }];
         // In a tab of herdr, herdr's names of panes first
@@ -623,6 +624,7 @@ Window {
         else if (name === "split-right") win.split("right");
         else if (name === "split-down") win.split("down");
         else if (name === "zoom-pane") win.paneAction("zoom");
+        else if (name === "context-menu") { if (v) win.paneMenu(v, FiliTheme.space4, FiliTheme.space4) }
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
         else if (name.startsWith("tab-")) { const n = parseInt(name.slice(4)); win.select(n === 9 ? win.tabs.length - 1 : n - 1) }

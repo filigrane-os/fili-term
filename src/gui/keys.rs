@@ -58,6 +58,7 @@ const DEFAULT: &[(&str, &str)] = &[
     ("scroll-top", "Ctrl+Shift+Home"),
     ("scroll-bottom", "Ctrl+Shift+End"),
     ("toggle-sidebar", "Ctrl+Shift+B"),
+    ("context-menu", "Menu | Shift+F10"),
 ];
 
 /// Keys a preset changes (the rest stays as in the default)
