@@ -19,7 +19,7 @@ pub const ACTIONS: &[&str] = &[
     "tab-1", "tab-2", "tab-3", "tab-4", "tab-5", "tab-6", "tab-7", "tab-8", "tab-9", "edit-output",
     "ask-rob", "integrate", "toggle-sidebar", "split-right", "split-down", "close-pane", "zoom-pane", "focus-left",
     "focus-right", "focus-up", "focus-down", "resize-left", "resize-right", "resize-up", "resize-down", "context-menu",
-    "rename-pane", "resize-mode", "edit-scrollback", "next-agent", "next-workspace", "previous-workspace", "new-workspace",
+    "rename-pane", "resize-mode", "edit-scrollback", "next-agent", "next-workspace", "previous-workspace", "new-workspace", "commands",
 ];
 
 fn dir() -> Option<PathBuf> {
@@ -42,6 +42,15 @@ fn answer(request: &str) -> (String, Option<String>) {
                 ("{\"ok\":true}".into(), Some(format!("report\t{session}\t{}\t{agent}", state.trim().to_ascii_lowercase())))
             }
             _ => ("{\"ok\":false,\"error\":\"usage: report SESSION STATE [AGENT]\"}".into(), None),
+        };
+    }
+    // command<TAB>NAME: a custom command of fili-term.toml ([[commands]]) by its name, for the active window
+    if verb == "command" {
+        let name: String = name.chars().filter(|c| !c.is_control()).take(100).collect();
+        return if name.trim().is_empty() {
+            ("{\"ok\":false,\"error\":\"usage: command NAME\"}".into(), None)
+        } else {
+            ("{\"ok\":true}".into(), Some(format!("command\t{}", name.trim())))
         };
     }
     if verb == "action" && ACTIONS.contains(&name) {
@@ -135,7 +144,7 @@ pub fn report(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-const USAGE: &str = "usage: fili-term ctl [--pid PID] action NAME | actions";
+const USAGE: &str = "usage: fili-term ctl [--pid PID] action NAME | command NAME | actions";
 
 /// `fili-term ctl ...` (arguments after `ctl`): prints the JSON answer; Err carries the reason.
 pub fn run(args: &[String]) -> Result<String, String> {
@@ -145,11 +154,11 @@ pub fn run(args: &[String]) -> Result<String, String> {
     };
     match rest {
         [verb] if verb == "actions" => Ok(format!("[{}]", ACTIONS.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(","))),
-        [verb, name] if verb == "action" => {
+        [verb, name] if verb == "action" || verb == "command" => {
             let sock = target(pid).ok_or("no fili-term window")?;
             let mut c = UnixStream::connect(sock).map_err(|e| e.to_string())?;
             c.set_read_timeout(Some(Duration::from_secs(5))).ok();
-            c.write_all(format!("action\t{name}\n").as_bytes()).map_err(|e| e.to_string())?;
+            c.write_all(format!("{verb}\t{name}\n").as_bytes()).map_err(|e| e.to_string())?;
             c.shutdown(std::net::Shutdown::Write).ok();
             let mut reply = String::new();
             let _ = c.read_to_string(&mut reply);
@@ -188,6 +197,14 @@ mod tests {
         assert_eq!(answer("report\t12\tdone\tx;rm -rf\n").1.as_deref(), Some("report\t12\tdone\txrm-rf"));
         assert!(answer("report\tx\tdone\n").1.is_none());
         assert!(answer("report\t12\tnonsense\n").1.is_none());
+    }
+
+    #[test]
+    fn custom_commands_by_name() {
+        let (reply, action) = answer("command\tLazygit\n");
+        assert_eq!(reply, "{\"ok\":true}");
+        assert_eq!(action.as_deref(), Some("command\tLazygit"));
+        assert!(answer("command\t  \n").1.is_none());
     }
 
     #[test]

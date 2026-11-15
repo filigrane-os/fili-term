@@ -99,9 +99,127 @@ pub fn set_mode_policy(kind: &str, policy: &str) -> std::io::Result<()> {
     std::fs::write(&path, with_value(&text, "modes", kind, policy))
 }
 
+/// A custom command (`[[commands]]` of fili-term.toml): run by a key or from the Commands menu
+#[derive(Debug, PartialEq)]
+pub struct Command {
+    pub keys: Vec<String>,
+    pub name: String,
+    /// "popup" (a terminal over the pane), "pane" (split below), "tab" (a new tab), "shell" (in the background)
+    pub kind: String,
+    pub command: String,
+    pub width: String,
+    pub height: String,
+}
+
+pub const COMMAND_KINDS: &[&str] = &["popup", "pane", "tab", "shell"];
+
+/// One TOML value of a command line: "basic string" (\" and \\ escapes), 'literal string', or a bare word up to a comment
+fn command_value(v: &str) -> String {
+    let v = v.trim();
+    if let Some(rest) = v.strip_prefix('"') {
+        let mut out = String::new();
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => break,
+                '\\' => match chars.next() {
+                    Some('n') => out.push(' '),
+                    Some('t') => out.push(' '),
+                    Some(o) => out.push(o),
+                    None => break,
+                },
+                c => out.push(c),
+            }
+        }
+        out
+    } else if let Some(rest) = v.strip_prefix('\'') {
+        rest.split('\'').next().unwrap_or("").to_string()
+    } else {
+        v.split('#').next().unwrap_or("").trim().to_string()
+    }
+}
+
+/// The `[[commands]]` tables of the file; an entry without a command or with an unknown type is left out
+pub fn commands_from(text: &str) -> Vec<Command> {
+    let mut tables: Vec<std::collections::BTreeMap<String, String>> = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            inside = line.split('#').next().unwrap_or("").replace(' ', "") == "[[commands]]";
+            if inside {
+                tables.push(Default::default());
+            }
+        } else if inside {
+            if let (Some((k, v)), Some(t)) = (line.split_once('='), tables.last_mut()) {
+                t.insert(k.trim().to_string(), command_value(v));
+            }
+        }
+    }
+    tables
+        .into_iter()
+        .filter_map(|t| {
+            let command = t.get("command")?.trim().to_string();
+            let kind = t.get("type").cloned().filter(|k| !k.is_empty()).unwrap_or_else(|| "popup".into());
+            if command.is_empty() || !COMMAND_KINDS.contains(&kind.as_str()) {
+                return None;
+            }
+            let name = t.get("name").map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| {
+                command.split_whitespace().next().unwrap_or("").rsplit('/').next().unwrap_or("").to_string()
+            });
+            let keys = t.get("key").map(|k| k.split('|').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
+            let size = |k: &str| t.get(k).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "80%".into());
+            Some(Command { keys, name, kind, command, width: size("width"), height: size("height") })
+        })
+        .collect()
+}
+
+/// The commands as JSON for the QML: [{keys: [...], name, type, command, width, height}]
+pub fn commands_json_from(text: &str) -> String {
+    let q = |s: &str| super::terminal::json_string(s);
+    let items: Vec<String> = commands_from(text)
+        .iter()
+        .map(|c| {
+            let keys: Vec<String> = c.keys.iter().map(|k| q(k)).collect();
+            format!(
+                "{{\"keys\":[{}],\"name\":{},\"type\":{},\"command\":{},\"width\":{},\"height\":{}}}",
+                keys.join(","),
+                q(&c.name),
+                q(&c.kind),
+                q(&c.command),
+                q(&c.width),
+                q(&c.height)
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+pub fn commands_json() -> String {
+    commands_json_from(&std::fs::read_to_string(super::theme::path()).unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_commands() {
+        let text = "font_size = 13\n\n[[commands]]\nkey = \"Ctrl+Alt+G | Ctrl+Alt+L\"\nname = \"Lazygit\"\ntype = \"popup\"\ncommand = \"lazygit\"  # git\nwidth = \"90%\"\nheight = 40\n\n[[commands]]\ncommand = 'cargo test -- --nocapture'\ntype = \"pane\"\n\n[[commands]]\ncommand = \"echo \\\"hi\\\" # not a comment\"\ntype = \"shell\"\n\n[[commands]]\ncommand = \"x\"\ntype = \"window\"\n\n[[commands]]\nname = \"No command\"\n\n[keys]\nfind = \"\"\n";
+        let c = commands_from(text);
+        assert_eq!(c.len(), 3);
+        assert_eq!(c[0], Command { keys: vec!["Ctrl+Alt+G".into(), "Ctrl+Alt+L".into()], name: "Lazygit".into(), kind: "popup".into(), command: "lazygit".into(), width: "90%".into(), height: "40".into() });
+        // Name from the command, popup size and type by default
+        assert_eq!((c[1].name.as_str(), c[1].kind.as_str(), c[1].width.as_str(), c[1].command.as_str()), ("cargo", "pane", "80%", "cargo test -- --nocapture"));
+        assert_eq!(c[2].command, "echo \"hi\" # not a comment");
+        assert!(commands_json_from(text).starts_with("[{\"keys\":[\"Ctrl+Alt+G\",\"Ctrl+Alt+L\"],\"name\":\"Lazygit\""));
+        assert_eq!(commands_json_from(""), "[]");
+        // The tables do not leak into the settings
+        assert!(json_from(text).contains("\"font_size\":13"));
+    }
 
     #[test]
     fn defaults() {

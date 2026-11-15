@@ -112,6 +112,12 @@
   folders. A window closed on purpose is forgotten; those lost with the process (logout, crash) stay. herdr tabs are
   not saved (herdr restores itself), only that its mode was on; windows that run a command (scripts) and windows with
   their own app-id are not saved. `restore = "always" | "never"` (top of fili-term.toml), `fili-term --new` skips it once.
+- Custom commands: `[[commands]]` tables in fili-term.toml with `key` (alternatives separated by |), `name`, `type`
+  (`popup` a terminal over the pane until the command ends, `pane` split below and closed when it ends, `tab` a new
+  tab, `shell` in the background), `command` (run by sh) and, for a popup, `width` / `height` (a percentage or a count
+  of cells). The command sees `FILI_TERM_SESSION` and `FILI_TERM_CWD` (the active pane's). Keys work at once, a
+  Commands submenu in the pane menu and the picker Ctrl+Alt+P (action commands, tmux prefix+:) list them,
+  `fili-term ctl command NAME` runs one by name (scripts, launchers).
 
 ## v2.0.0 (2026-11-12)
 

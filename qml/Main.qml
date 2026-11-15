@@ -242,6 +242,52 @@ Window {
         }
         t.split(dir, { cwd: v.cwd, command: [] });
     }
+    // Custom commands ([[commands]] of fili-term.toml, read again when the file changes): a key or the Commands menu runs
+    // one for the active pane, with FILI_TERM_SESSION and FILI_TERM_CWD naming it
+    property var commands: JSON.parse(Aeroport.commandsJson())
+    Connections {
+        target: Aeroport
+        function onWindowChanged() { win.commands = JSON.parse(Aeroport.commandsJson()) }
+    }
+    function runCustom(c) {
+        const v = view, t = tab;
+        if (!c || !v || !t)
+            return;
+        const cwd = v.cwd || win.cwd;
+        if (c.type === "shell") {
+            Aeroport.runShell(c.command, cwd, v.sessionId);
+            return;
+        }
+        // A program in the environment of the pane: its session and folder, run by sh
+        const argv = ["env", "FILI_TERM_SESSION=" + v.sessionId, "FILI_TERM_CWD=" + cwd, "sh", "-c", c.command];
+        if (c.type === "tab") {
+            addTab(0, cwd, argv);
+        } else if (c.type === "pane") {
+            if (t.modeTab !== "")
+                showError(Aeroport.tr("A pane cannot be added to a herdr tab from here"));
+            else
+                t.split("down", { cwd: cwd, command: argv });
+        } else {
+            popup = { command: argv, cwd: cwd, width: c.width || "80%", height: c.height || "80%" };
+        }
+    }
+    function runNamed(name) {
+        const c = commands.find(x => x.name === name);
+        if (c)
+            runCustom(c);
+        else
+            showError(Aeroport.tr("No command named %1").replace("%1", name));
+    }
+    // The commands as menu entries
+    function commandEntries() {
+        return commands.map((c, i) => ({ id: "cmd:" + i, label: c.name, hint: c.keys.length ? c.keys[0] : "" }));
+    }
+    // The picker (action commands): the commands under the top left of the terminal
+    function commandPicker() {
+        const p = stack.mapToItem(null, FiliTheme.margin, FiliTheme.space4);
+        contextMenu.open(p.x, p.y, commands.length ? commandEntries()
+            : [{ id: "", label: Aeroport.tr("No custom command: add [[commands]] to fili-term.toml"), enabled: false }]);
+    }
     // Name the active pane (shown at its top right when the tab has several); herdr names its own panes
     function renamePane() {
         const t = tab, v = view;
@@ -380,6 +426,7 @@ Window {
                 { id: "pane:zoom", label: t.zoomed ? Aeroport.tr("Show All Panes") : Aeroport.tr("Zoom Pane"), hint: keyHint("zoom-pane"), enabled: several },
                 { id: "pane:resize-mode", label: Aeroport.tr("Resize Pane"), hint: keyHint("resize-mode"), enabled: several },
                 { id: "pane:edit-scrollback", label: Aeroport.tr("Open History in the Editor"), hint: keyHint("edit-scrollback") },
+                { id: "pane:commands", label: Aeroport.tr("Commands"), enabled: commands.length > 0, children: commandEntries() },
                 { separator: true },
                 { id: "pane:close", label: Aeroport.tr("Close Pane"), hint: keyHint("close-pane") }
             ]);
@@ -463,6 +510,10 @@ Window {
     }
     readonly property var swapLabels: ({ left: "With the Pane on the Left", right: "With the Pane on the Right", up: "With the Pane Above", down: "With the Pane Below" })
     function menuAction(id) {
+        if (id.startsWith("cmd:")) {
+            runCustom(commands[parseInt(id.slice(4))]);
+            return;
+        }
         if (id.startsWith("native:")) {
             nativeMenuAction(id.slice(7));
             return;
@@ -1130,6 +1181,7 @@ Window {
         else if (name === "resize-mode") win.resizeMode();
         else if (name === "edit-scrollback") win.editScrollback();
         else if (name === "next-agent") win.nextAgent();
+        else if (name === "commands") win.commandPicker();
         else if (name.startsWith("focus-") || name.startsWith("resize-")) win.paneAction(name);
         else if (name === "close-window") win.close();
         else if (name.startsWith("tab-")) { const row = win.rowTabs, n = parseInt(name.slice(4)); const t = row[n === 9 ? row.length - 1 : n - 1]; if (t) win.select(win.tabs.indexOf(t)) }
@@ -2174,6 +2226,16 @@ Window {
     Connections {
         target: Aeroport
         function onWindowChanged() { win.keymap = JSON.parse(Aeroport.keysJson()) }
+    }
+    // The keys of the custom commands (not while a popup holds the keyboard)
+    Instantiator {
+        model: win.commands.filter(c => c.keys.length > 0)
+        delegate: Shortcut {
+            required property var modelData
+            sequences: modelData.keys
+            enabled: win.popup === null
+            onActivated: win.runCustom(modelData)
+        }
     }
     Instantiator {
         model: win.keymap

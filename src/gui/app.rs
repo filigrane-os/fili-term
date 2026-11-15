@@ -107,6 +107,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "shortPath"]
         fn short_path(self: &Aeroport, path: &QString) -> QString;
+        /// The custom commands of fili-term.toml (`[[commands]]`) as JSON
+        #[qinvokable]
+        #[cxx_name = "commandsJson"]
+        fn commands_json(self: &Aeroport) -> QString;
+        /// Run a custom command of type "shell": detached, in the background, in `cwd`, for a session
+        #[qinvokable]
+        #[cxx_name = "runShell"]
+        fn run_shell(self: &Aeroport, command: &QString, cwd: &QString, session: i32);
         /// The windows saved by the last run (JSON list, "[]" when none) and the ids of the sessions the daemon still has
         #[qinvokable]
         #[cxx_name = "savedWindows"]
@@ -426,6 +434,28 @@ impl qobject::Aeroport {
         let json = |s: &str| serde_json::Value::from(s).to_string();
         let list: Vec<String> = rows.iter().map(|[a, b]| format!("[{},{}]", json(a), json(b))).collect();
         QString::from(&format!("[{}]", list.join(",")))
+    }
+
+    fn commands_json(&self) -> QString {
+        QString::from(&super::settings::commands_json())
+    }
+
+    fn run_shell(&self, command: &QString, cwd: &QString, session: i32) {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(command.to_string())
+            .env("FILI_TERM_SESSION", session.to_string())
+            .env("FILI_TERM_CWD", cwd.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0);
+        let dir = cwd.to_string();
+        if !dir.is_empty() && std::path::Path::new(&dir).is_dir() {
+            cmd.current_dir(dir);
+        }
+        let _ = cmd.spawn().map(|mut c| std::thread::spawn(move || c.wait()));
     }
 
     fn saved_windows(&self) -> QString {

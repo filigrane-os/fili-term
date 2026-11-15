@@ -90,6 +90,24 @@ in `~/.claude/settings.json`:
 }
 ```
 
+## Custom commands
+
+Your own commands in fili-term.toml, run for the active pane (its session in `$FILI_TERM_SESSION`, its folder in
+`$FILI_TERM_CWD`):
+
+```toml
+[[commands]]
+key = "Ctrl+Alt+G"        # alternatives: "Ctrl+Alt+G | Ctrl+B, G"
+name = "Lazygit"          # in the Commands menu (default: the program's name)
+type = "popup"            # popup (over the pane, closes when it ends) | pane (split below) | tab | shell (background)
+command = "lazygit"       # run by sh
+width = "90%"             # popup only: a percentage or a count of cells
+height = "90%"
+```
+
+The pane menu has a Commands submenu, Ctrl+Alt+P (action `commands`) opens the same list, and
+`fili-term ctl command Lazygit` runs one by name from a script or a launcher.
+
 ## Workspaces
 
 Tabs are grouped by project: the workspace of a tab is the git root of its first pane's folder, else the folder. The tab

@@ -172,5 +172,8 @@
  "Folder of the workspace": "Dossier de l’espace de travail",
  "Move to Workspace": "Déplacer vers l’espace",
  "New Workspace…": "Nouvel espace de travail…",
- "Not a folder: %1": "Pas un dossier : %1"
+ "Not a folder: %1": "Pas un dossier : %1",
+ "A pane cannot be added to a herdr tab from here": "Impossible d’ajouter un volet à un onglet herdr d’ici",
+ "No custom command: add [[commands]] to fili-term.toml": "Aucune commande personnalisée : ajoutez [[commands]] à fili-term.toml",
+ "No command named %1": "Aucune commande nommée %1"
 }

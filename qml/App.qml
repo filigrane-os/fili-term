@@ -88,6 +88,12 @@ QtObject {
                 root.windows.some(x => x.agentReport(parseInt(parts[1]), parts[2], parts[3] || ""));
                 return;
             }
+            if (parts[0] === "command") {
+                const target = root.windows.find(x => x.active) || root.windows[root.windows.length - 1];
+                if (target)
+                    target.runNamed(parts.slice(1).join(" "));
+                return;
+            }
             if (parts[0] === "show-session") {
                 root.windows.some(x => x.showSession(parseInt(parts[1])));
                 return;
