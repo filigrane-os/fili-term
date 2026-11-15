@@ -249,6 +249,26 @@ Item {
             focusActive();
         return true;
     }
+    // A new terminal in the place of one that ended (a pane of herdr whose client left: attached again), same focus
+    function renew(v, props) {
+        const f = find(v);
+        if (!f)
+            return null;
+        const n = newView(props);
+        f.node.view = n;
+        if (active === v)
+            active = n;
+        if (zoomed === v)
+            zoomed = n;
+        if (chosen === v)
+            chosen = n;
+        const had = v.activeFocus;
+        v.destroy();
+        layout();
+        if (had || (shown && active === n))
+            n.forceActiveFocus();
+        return n;
+    }
     // Exchange the active pane with its neighbour in a direction; the keyboard stays with the same terminal
     function swap(dir) {
         const o = active ? neighbour(active, dir) : null;

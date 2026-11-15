@@ -59,9 +59,10 @@ Colour queries (OSC 10/11/4) are answered with the theme's palette.
 
 ## Integrated modes
 
-Only when the user calls the program: `fili-term mode herdr`, or the footer's offer when `herdr` runs in a tab (the
-daemon reads the foreground process of each terminal from `/proc` once a second; `[modes] herdr = "ask" | "auto" |
-"off"`). Nothing runs otherwise. The adapter (`src/modes/`) is a thread of the window process while the mode is on; it
+When the program runs in a tab: `herdr` typed in a terminal is integrated at once (the daemon reads the foreground
+process of each terminal from `/proc` once a second; `[modes] herdr = "auto" | "ask" | "off"`, "ask" offers it in the
+footer), or `fili-term mode herdr`. The footer then offers Use herdr's Interface: the mode stops and herdr's own client
+opens in a tab. Nothing runs otherwise. The adapter (`src/modes/`) is a thread of the window process while the mode is on; it
 sends the window a generic state (sections, items with a status, tabs and their panes) as JSON and takes its actions.
 
 - herdr (herdr.dev): each tab of herdr's focused workspace is a tab of the window, attached to the terminal of one pane
@@ -70,8 +71,11 @@ sends the window a generic state (sections, items with a status, tabs and their 
   there) fill the sidebar. New tab, close tab, a click on a workspace or an agent go through herdr's socket API
   (newline-delimited JSON, one connection per request, one kept for the events). Integrate on a herdr started by hand
   ends that client (its server and panes go on) and opens its tabs beside. Its server is started when it does not run.
-  A notification when an agent waits or finished while herdr's tabs are not watched. Stop Integration closes the tabs;
-  herdr goes on.
+  A notification when an agent waits or finished while herdr's tabs are not watched. Use herdr's Interface closes the
+  tabs and opens herdr's client in one; herdr goes on.
+- A remote herdr (`herdr --remote TARGET`): one `ssh -N` forwards its API socket and its clients' socket to a private
+  directory of this machine (`$XDG_RUNTIME_DIR/fili-term/`), then everything goes as for a local one; the link comes
+  back when SSH drops. SSH runs without a prompt: the key must be in ssh-agent.
 - Next: nvim (msgpack-RPC, its tabs and a file tree), tmux (windows and sessions).
 
 ## Settings and theme

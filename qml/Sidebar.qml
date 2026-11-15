@@ -56,7 +56,7 @@ Rectangle {
                 leftPadding: FiliTheme.margin / 2
                 rightPadding: FiliTheme.space3
                 topPadding: FiliTheme.space4
-                text: side.mode ? Aeroport.tr(side.mode.message) : ""
+                text: side.mode ? (side.mode.messageArgs || []).reduce((t, a, i) => t.replace("%" + (i + 1), a), Aeroport.tr(side.mode.message)) : ""
                 wrapMode: Text.Wrap
                 font.family: FiliTheme.font
                 font.pixelSize: FiliTheme.sizeSmall
@@ -205,13 +205,13 @@ Rectangle {
         flick: flick
         anchors { top: flick.top; bottom: flick.bottom; right: flick.right }
     }
-    // Leave the mode: the program goes on in the terminal, the window goes back to a plain terminal
+    // Leave the mode: herdr's own interface opens in a tab, for the same server
     Text {
         id: leaveButton
         anchors { left: parent.left; bottom: parent.bottom; leftMargin: FiliTheme.margin / 2; bottomMargin: FiliTheme.space2 }
         height: FiliTheme.sideRowHeight
         verticalAlignment: Text.AlignVCenter
-        text: Aeroport.tr("Stop Integration")
+        text: Aeroport.tr("Use herdr's Interface")
         font.family: FiliTheme.font
         font.pixelSize: FiliTheme.sizeSmall
         color: leaveArea.containsMouse ? FiliTheme.text : FiliTheme.textSecondary

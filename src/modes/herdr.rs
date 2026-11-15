@@ -105,22 +105,20 @@ impl Requests {
 impl Adapter {
     fn main(&mut self, rx: &Receiver<In>) {
         loop {
-            let path = self.socket();
-            match path.as_ref().map(Requests::connect) {
-                Some(Ok(mut req)) => {
+            match Requests::connect(&self.ctx.socket) {
+                Ok(mut req) => {
                     if !self.connected(&mut req, rx) {
                         return;
                     }
                 }
-                other => {
-                    let message = match other {
-                        None => "herdr runs on another machine: no integration".to_string(),
-                        _ => "Waiting for herdr…".to_string(),
-                    };
+                Err(_) => {
+                    let (message, args) = self.ctx.waiting();
                     self.shown.clear();
                     self.ctx.publish(format!(
-                        "{{\"kind\":\"herdr\",\"title\":\"herdr\",\"connected\":false,\"message\":{},\"tabs\":[],\"sections\":[]}}",
-                        quote(&message)
+                        "{{\"kind\":\"herdr\",\"title\":{},\"connected\":false,\"message\":{},\"messageArgs\":{},\"tabs\":[],\"sections\":[]}}",
+                        quote(&self.ctx.title()),
+                        quote(&message),
+                        serde_json::Value::from(args)
                     ));
                 }
             }
@@ -188,15 +186,10 @@ impl Adapter {
         true
     }
 
-    fn socket(&self) -> Option<PathBuf> {
-        Some(self.ctx.socket.clone())
-    }
-
     fn subscribe(&mut self, panes: &BTreeSet<String>) -> std::io::Result<()> {
         self.close_events();
         self.generation += 1;
-        let path = self.socket().ok_or_else(|| std::io::Error::other("remote"))?;
-        let mut stream = UnixStream::connect(path)?;
+        let mut stream = UnixStream::connect(&self.ctx.socket)?;
         let mut subs: Vec<Value> = EVENTS.iter().map(|t| json!({"type": t})).collect();
         for p in panes {
             subs.push(json!({"type": "pane.agent_status_changed", "pane_id": p}));
@@ -307,7 +300,7 @@ impl Adapter {
 
     /// State for the window, and notices for the agents that need the user
     fn show(&mut self, snap: &Value) {
-        let (state, statuses, notices) = state_of(snap, self.statuses.as_ref());
+        let (state, statuses, notices) = state_of(snap, self.statuses.as_ref(), &self.ctx.title());
         self.statuses = Some(statuses);
         if state != self.shown {
             self.shown = state.clone();
@@ -588,9 +581,16 @@ pub fn commands(config: &str) -> Vec<Value> {
     out.into_iter().filter(|c| c.get("command").is_some()).map(Value::Object).collect()
 }
 
-/// Socket of a herdr client running as `pid` (its own options and environment), else the default one of this process'
-/// environment. None for a client of a remote herdr.
-pub fn socket_for(pid: Option<u32>) -> Option<PathBuf> {
+/// Where a herdr client connects: a socket of this machine, or a server reached through SSH (`herdr --remote TARGET`)
+#[derive(Debug, PartialEq)]
+pub enum Target {
+    Local(PathBuf),
+    Remote { ssh: String, session: Option<String> },
+}
+
+/// Target of a herdr client running as `pid` (its own options and environment), else the default one of this process'
+/// environment. None for a command that is not a client (`--machine`).
+pub fn target_for(pid: Option<u32>) -> Option<Target> {
     let args: Vec<String> = pid
         .and_then(|p| std::fs::read(format!("/proc/{p}/cmdline")).ok())
         .map(|b| b.split(|c| *c == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect())
@@ -606,27 +606,32 @@ pub fn socket_for(pid: Option<u32>) -> Option<PathBuf> {
                 .collect()
         })
         .unwrap_or_else(|| std::env::vars().collect());
-    socket_path(&args, &env)
+    target(&args, &env)
 }
 
 /// Where a herdr client connects, from its arguments and environment (herdr's order: `--session NAME`,
-/// HERDR_SOCKET_PATH, HERDR_SESSION, then the default session). None for `--remote`.
-fn socket_path(args: &[String], env: &HashMap<String, String>) -> Option<PathBuf> {
+/// HERDR_SOCKET_PATH, HERDR_SESSION, then the default session; `--remote TARGET` for a server through SSH)
+fn target(args: &[String], env: &HashMap<String, String>) -> Option<Target> {
     let mut session: Option<String> = None;
+    let mut remote: Option<String> = None;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--remote" | "--machine" => return None,
+            "--machine" => return None,
+            "--remote" => remote = it.next().cloned(),
             "--session" => session = it.next().cloned(),
             "attach" if session.is_none() => session = it.next().cloned(),
             a if a.starts_with("--session=") => session = Some(a["--session=".len()..].to_string()),
-            a if a.starts_with("--remote=") => return None,
+            a if a.starts_with("--remote=") => remote = Some(a["--remote=".len()..].to_string()),
             _ => {}
         }
     }
+    if let Some(ssh) = remote.filter(|r| !r.is_empty()) {
+        return Some(Target::Remote { ssh, session });
+    }
     if session.is_none() {
         if let Some(p) = env.get("HERDR_SOCKET_PATH").filter(|p| !p.is_empty()) {
-            return Some(PathBuf::from(p));
+            return Some(Target::Local(PathBuf::from(p)));
         }
         session = env.get("HERDR_SESSION").filter(|s| !s.is_empty()).cloned();
     }
@@ -636,10 +641,10 @@ fn socket_path(args: &[String], env: &HashMap<String, String>) -> Option<PathBuf
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env.get("HOME").cloned().unwrap_or_default()).join(".config"))
         .join("herdr");
-    Some(match session {
+    Some(Target::Local(match session {
         Some(name) => config.join("sessions").join(name).join("herdr.sock"),
         None => config.join("herdr.sock"),
-    })
+    }))
 }
 
 /// A tab's layout as a tree for the window: a split {dir, ratio, path, a, b} (path: the booleans herdr's
@@ -707,7 +712,7 @@ fn find_pane_id(v: &Value) -> Option<String> {
 }
 
 /// A word for sh, in single quotes
-fn shell_quote(s: &str) -> String {
+pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -737,7 +742,7 @@ fn agent_label(a: &Value) -> String {
 }
 
 /// (state JSON, status per agent, notices) from a `session.snapshot`
-fn state_of(snap: &Value, before: Option<&HashMap<String, String>>) -> (String, HashMap<String, String>, Vec<String>) {
+fn state_of(snap: &Value, before: Option<&HashMap<String, String>>, title: &str) -> (String, HashMap<String, String>, Vec<String>) {
     let empty = Vec::new();
     let workspaces: Vec<&Value> = snap["workspaces"].as_array().unwrap_or(&empty).iter().collect();
     // In herdr's order (that of the snapshot): `number` is the order of creation, it stays when a tab or a workspace moves
@@ -859,7 +864,7 @@ fn state_of(snap: &Value, before: Option<&HashMap<String, String>>) -> (String, 
         .collect();
 
     let state = json!({
-        "kind": "herdr", "title": "herdr", "connected": true, "message": "",
+        "kind": "herdr", "title": title, "connected": true, "message": "",
         "tabs": tab_items, "addTab": true,
         "sections": [
             {"key": "workspaces", "title": "Workspaces", "add": true, "items": ws_items},
@@ -882,15 +887,21 @@ mod tests {
 
     #[test]
     fn socket_resolution() {
+        let local = |p: &str| Some(Target::Local(p.into()));
         let home = env(&[("HOME", "/home/u")]);
-        assert_eq!(socket_path(&args(&["herdr"]), &home), Some("/home/u/.config/herdr/herdr.sock".into()));
-        assert_eq!(socket_path(&args(&["herdr", "--session", "work"]), &home), Some("/home/u/.config/herdr/sessions/work/herdr.sock".into()));
-        assert_eq!(socket_path(&args(&["herdr", "session", "attach", "x"]), &home), Some("/home/u/.config/herdr/sessions/x/herdr.sock".into()));
-        assert_eq!(socket_path(&args(&["herdr", "--remote", "host"]), &home), None);
+        assert_eq!(target(&args(&["herdr"]), &home), local("/home/u/.config/herdr/herdr.sock"));
+        assert_eq!(target(&args(&["herdr", "--session", "work"]), &home), local("/home/u/.config/herdr/sessions/work/herdr.sock"));
+        assert_eq!(target(&args(&["herdr", "session", "attach", "x"]), &home), local("/home/u/.config/herdr/sessions/x/herdr.sock"));
+        assert_eq!(target(&args(&["herdr", "--remote", "host"]), &home), Some(Target::Remote { ssh: "host".into(), session: None }));
+        assert_eq!(
+            target(&args(&["herdr", "--remote=me@box", "--session", "w"]), &home),
+            Some(Target::Remote { ssh: "me@box".into(), session: Some("w".into()) })
+        );
+        assert_eq!(target(&args(&["herdr", "--machine", "box", "pane", "list"]), &home), None);
         let e = env(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/c"), ("HERDR_SESSION", "s")]);
-        assert_eq!(socket_path(&args(&["herdr"]), &e), Some("/c/herdr/sessions/s/herdr.sock".into()));
+        assert_eq!(target(&args(&["herdr"]), &e), local("/c/herdr/sessions/s/herdr.sock"));
         let e = env(&[("HOME", "/home/u"), ("HERDR_SOCKET_PATH", "/run/h.sock")]);
-        assert_eq!(socket_path(&args(&["herdr"]), &e), Some("/run/h.sock".into()));
+        assert_eq!(target(&args(&["herdr"]), &e), local("/run/h.sock"));
     }
 
     /// A snapshot as herdr 0.9.5 returns it (session.snapshot, trimmed)
@@ -981,7 +992,7 @@ mod tests {
             {"workspace_id":"w1","number":1,"label":"api","worktree":{"repo_key":"r","is_linked_worktree":false}},
             {"workspace_id":"w2","number":2,"label":"web"},
             {"workspace_id":"w3","number":3,"label":"api-fix","worktree":{"repo_key":"r","is_linked_worktree":true}}]}"#).unwrap();
-        let (state, _, _) = state_of(&snap, None);
+        let (state, _, _) = state_of(&snap, None, "herdr");
         let s: Value = serde_json::from_str(&state).unwrap();
         let items = s["sections"][0]["items"].as_array().unwrap();
         let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
@@ -994,7 +1005,7 @@ mod tests {
     #[test]
     fn state_from_snapshot() {
         let snap: Value = serde_json::from_str(SNAPSHOT).unwrap();
-        let (state, statuses, notices) = state_of(&snap, None);
+        let (state, statuses, notices) = state_of(&snap, None, "herdr");
         let s: Value = serde_json::from_str(&state).unwrap();
         // Tabs of the focused workspace only, in herdr's order
         assert_eq!(s["tabs"].as_array().unwrap().len(), 2);
@@ -1024,10 +1035,10 @@ mod tests {
         // The agent stops and waits for the user: one notice; the same state again: none
         let blocked = SNAPSHOT.replace(r#""agent_status":"working","pane_id""#, r#""agent_status":"blocked","pane_id""#);
         let snap: Value = serde_json::from_str(&blocked).unwrap();
-        let (_, statuses, notices) = state_of(&snap, Some(&statuses));
+        let (_, statuses, notices) = state_of(&snap, Some(&statuses), "herdr");
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("\"blocked\"") && notices[0].contains("claude"));
-        let (_, _, notices) = state_of(&snap, Some(&statuses));
+        let (_, _, notices) = state_of(&snap, Some(&statuses), "herdr");
         assert!(notices.is_empty());
     }
 }

@@ -33,7 +33,7 @@ Window {
     property bool showHeader: Aeroport.windowPart("header")
     property bool showFooter: Aeroport.windowPart("footer")
     readonly property bool headerShown: showHeader
-    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || asking !== null || error !== "" || resizing
+    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || modeNote.flash || asking !== null || error !== "" || resizing
     Connections {
         target: Aeroport
         function onWindowChanged() {
@@ -376,20 +376,79 @@ Window {
         modeAt = fromTab ? tabs.indexOf(fromTab.paneTab) + 1 : tabs.length;
         modeActive = "";
         if (!modeClient.start(kind, fromTab ? fromTab.foregroundPid() : 0))
-            Aeroport.notify(Aeroport.tr("Cannot integrate %1").replace("%1", kind), Aeroport.tr("It runs on another machine."));
+            Aeroport.notify(Aeroport.tr("Cannot integrate %1").replace("%1", kind), Aeroport.tr("Its server could not be found."));
+        else
+            modeNote.show();
     }
     // Menu "Integrate Program": the program of the tab, or leave the mode that runs
     function integrate() {
         if (modeClient.state !== "")
-            modeClient.stop();
+            leaveMode();
         else if (integrable(view) !== "")
             startMode(integrable(view), view);
+    }
+    // Back to herdr's own interface: the mode stops (its tabs close) and herdr's full client opens in a tab where they
+    // were, for the same server (that machine's, through SSH, for a remote one); not integrated again while it runs
+    function leaveMode() {
+        if (modeClient.state === "")
+            return;
+        const kind = modeClient.kind, argv = modeClient.clientCommand();
+        const at = Math.min(modeAt, tabs.filter(t => t.modeTab === "").length);
+        modeClient.stop();
+        if (argv.length === 0)
+            return;
+        const t = newTab();
+        t.start({ cwd: view ? view.cwd : "", command: argv, declined: kind });
+        const list = tabs.slice();
+        list.splice(Math.min(at, list.length), 0, t);
+        tabs = list;
+        select(tabs.indexOf(t));
     }
     function modeAct(action) {
         // Any other action may move herdr's focus itself (a split, a new pane): followed at once
         if (action.op !== "focus-pane" && tab)
             tab.chosen = null;
         modeClient.act(JSON.stringify(action));
+    }
+    // A terminal attached to a pane of herdr. Right click as in herdr's client: its pane menu, or the program with the
+    // modifier of its config
+    function herdrProps(terminal, pane, cwd) {
+        return { cwd: cwd || "", command: modeClient.attachCommand(terminal, pane), modeTerminal: terminal, modePane: pane,
+                 menuFirst: true, passMods: modeClient.rightClickPass(), primaryScreen: true };
+    }
+    // A client of herdr ended while its pane goes on (the SSH link of a remote herdr dropped, herdr restarted): attached
+    // again in place after a moment, as long as herdr still has the pane
+    property var reattaching: []
+    function reattach(v) {
+        if (reattaching.indexOf(v) < 0)
+            reattaching = reattaching.concat([v]);
+        reattachTimer.restart();
+    }
+    Timer {
+        id: reattachTimer
+        interval: 1500
+        onTriggered: {
+            const list = win.reattaching;
+            win.reattaching = [];
+            const st = win.modeState;
+            if (!st || !st.connected) {
+                // Not back yet: tried again
+                if (modeClient.state !== "" && list.length) {
+                    win.reattaching = list;
+                    restart();
+                }
+                return;
+            }
+            for (const v of list) {
+                const t = v.paneTab;
+                if (!t || t.leaves.indexOf(v) < 0)
+                    continue;
+                const info = st.tabs.find(x => x.id === t.modeTab);
+                const p = info ? info.panes.find(x => x.terminal === v.modeTerminal) : null;
+                if (p)
+                    t.renew(v, win.herdrProps(v.modeTerminal, p.id, p.cwd || v.cwd));
+            }
+        }
     }
     // herdr's tabs as tabs of the window: one per tab of herdr's focused workspace, attached to the pane chosen in the
     // sidebar or else to the focused one; together at modeAt, in herdr's order
@@ -414,8 +473,7 @@ Window {
             if (fresh)
                 t = newTab({ modeTab: w.id });
             const tree = w.layout || w.panes.find(p => p.focused) || w.panes[0] || null;
-            // Right click as in herdr's client: its pane menu, or the program with the modifier of its config
-            const props = n => ({ cwd: n.cwd || w.cwd, command: modeClient.attachCommand(n.terminal, n.id || ""), menuFirst: true, passMods: modeClient.rightClickPass(), primaryScreen: true });
+            const props = n => herdrProps(n.terminal, n.id || "", n.cwd || w.cwd);
             if (!t.syncTree(tree, w.pane, w.zoomed === true, props, pool)) {
                 if (fresh)
                     t.destroy();
@@ -831,13 +889,18 @@ Window {
             // In a tab of herdr: the terminal of herdr attached here and its pane
             property string modeTerminal: ""
             property string modePane: ""
-            // The user said "Not Now" to the offer: not asked again while the program stays in the foreground
+            // The user said "Not Now" to the offer, or went back to herdr's interface: not integrated again while the
+            // program stays in the foreground (a launcher before it, `env`, does not count)
             property string declined: ""
+            property bool declinedSeen: false
             onForegroundChanged: {
                 const kind = win.modeKind(foreground);
-                if (kind === "")
+                if (kind !== "" && kind === declined)
+                    declinedSeen = true;
+                else if (kind === "" && declinedSeen) {
                     declined = "";
-                else if (win.integrable(term) !== "" && win.modePolicies[kind] === "auto" && declined !== kind)
+                    declinedSeen = false;
+                } else if (win.integrable(term) !== "" && win.modePolicies[kind] === "auto" && declined !== kind)
                     win.startMode(kind, term);
             }
             onActiveFocusChanged: if (activeFocus && paneTab) paneTab.setActive(term)
@@ -847,7 +910,12 @@ Window {
             padding: win.settings.padding
             lineSpacing: win.settings.line_spacing
             colors: FiliTheme.terminalColors
-            onExited: if (!(win.hold && term.command.length > 0)) win.closePane(term, false)
+            onExited: {
+                if (term.modeTerminal !== "" && modeClient.state !== "")
+                    win.reattach(term);
+                else if (!(win.hold && term.command.length > 0))
+                    win.closePane(term, false);
+            }
             onBell: win.alert(0)
             // A long command ended while nobody watches this terminal: a notification with its result
             onCommandFinished: (command, exit, duration) => {
@@ -1060,7 +1128,7 @@ Window {
         onAdded: section => { win.modeAct({ op: "new", section: section }); win.refocus() }
         onContextRequested: (section, item, x, y) => win.herdrMenu(section, item, x, y)
         onChoiceClicked: section => { if (section === "agents") win.toggleAgentsSort() }
-        onLeave: { modeClient.stop(); win.refocus() }
+        onLeave: { win.leaveMode(); win.refocus() }
     }
 
     // The terminals of the window, one shown
@@ -1489,12 +1557,66 @@ Window {
         }
         Text {
             id: where
-            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: modeOffer.wanted ? modeOffer.left : txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: modeOffer.wanted ? modeOffer.left : modeNote.visible ? modeNote.left : txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
             text: win.view ? Aeroport.shortPath(win.view.cwd) : ""
             elide: Text.ElideMiddle
             font.family: FiliTheme.font
             font.pixelSize: FiliTheme.sizeSmall
             color: FiliTheme.textSecondary
+        }
+        // herdr's tabs are shown: the way back to herdr's own interface. Always there with the footer; without it, for a
+        // few seconds after herdr was integrated on its own
+        Row {
+            id: modeNote
+            readonly property bool wanted: win.tab !== null && win.tab.modeTab !== "" && modeClient.state !== ""
+            property bool flash: false
+            visible: wanted && (win.showFooter || flash)
+            anchors { right: txNotice.wanted ? txNotice.left : size.left; rightMargin: FiliTheme.space5; verticalCenter: parent.verticalCenter }
+            spacing: FiliTheme.space3
+            Timer { id: modeNoteTimer; interval: 8000; onTriggered: modeNote.flash = false }
+            function show() { flash = true; modeNoteTimer.restart() }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: modeClient.host !== "" ? Aeroport.tr("herdr on %1, integrated").replace("%1", modeClient.host) : Aeroport.tr("herdr integrated")
+                font.family: FiliTheme.font
+                font.pixelSize: FiliTheme.sizeSmall
+                color: FiliTheme.textSecondary
+            }
+            Repeater {
+                model: [
+                    { label: Aeroport.tr("Use herdr's Interface"), act: "leave" },
+                    { label: Aeroport.tr("Always Use herdr's Interface"), act: "never" }
+                ]
+                Text {
+                    required property var modelData
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.label
+                    font.family: FiliTheme.font
+                    font.pixelSize: FiliTheme.sizeSmall
+                    color: modelData.act === "leave" ? FiliTheme.accentColor : noteArea.containsMouse ? FiliTheme.text : FiliTheme.textSecondary
+                    MouseArea {
+                        id: noteArea
+                        anchors { fill: parent; margins: -4 }
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            const kind = modeClient.kind;
+                            if (parent.modelData.act === "never") {
+                                // Asked in the footer next time (Integrate · Not Now · Don't Ask Again)
+                                Aeroport.setModePolicy(kind, "ask");
+                                const p = Object.assign({}, win.modePolicies);
+                                p[kind] = "ask";
+                                win.modePolicies = p;
+                            }
+                            modeNote.flash = false;
+                            win.leaveMode();
+                            win.refocus();
+                        }
+                    }
+                    Accessible.role: Accessible.Button
+                    Accessible.name: text
+                }
+            }
         }
         // A program with a mode runs in the tab (herdr): offer to integrate it, never on its own unless [modes] says "auto"
         Row {

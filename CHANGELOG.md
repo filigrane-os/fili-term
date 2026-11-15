@@ -33,7 +33,12 @@
   become tabs of the window, each attached to a pane (`herdr terminal attach`), without herdr's own interface; its
   workspaces, agents (with their status) and the panes of the tab shown fill the sidebar; new and closed tabs, workspaces
   and agents go through its socket API; a notification when an agent waits for you or finished while you look
-  elsewhere. Stop Integration closes those tabs, herdr goes on.
+  elsewhere. Use herdr's Interface (footer, sidebar, Shell > Integrate Program) closes those tabs and opens herdr's own
+  client in a tab, herdr goes on.
+- `herdr` typed in a tab is integrated at once by default (`[modes] herdr = "auto"`); the footer says so with Use herdr's
+  Interface and Always Use herdr's Interface (back to "ask").
+- A remote herdr (`herdr --remote TARGET`) is integrated too: its two sockets are forwarded by SSH to this machine, the
+  link comes back when it drops.
 - The daemon tells the window the process in the foreground of each terminal (from /proc, once a second).
 - herdr's right-click menus: on a tab (rename, new, close), a workspace (rename, new worktree, open worktree, delete a
   worktree checkout, close the group, close), a pane or an agent (rename, clear the name, swap with the focused pane,

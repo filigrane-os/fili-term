@@ -6,13 +6,16 @@
 //! program (socket, RPC), publishes the state the window draws as JSON, and takes the window's actions:
 //!
 //! ```json
-//! {"kind": "herdr", "title": "herdr", "connected": true, "message": "",
+//! {"kind": "herdr", "title": "herdr", "connected": true, "message": "", "messageArgs": [],
 //!  "tabs": [{"id": "w1:t1", "label": "1", "active": true, "status": "working", "terminal": "term_…", "cwd": "/…",
 //!            "panes": [{"id": "w1:p1", "terminal": "term_…", "label": "zsh", "status": "idle", "focused": true}]}],
 //!  "addTab": true,
 //!  "sections": [{"key": "workspaces", "title": "Workspaces", "add": true,
 //!                "items": [{"id": "w1", "label": "api", "detail": "2", "status": "idle", "active": true}]}]}
 //! ```
+//!
+//! A herdr on another machine (`herdr --remote TARGET`) is reached through SSH: remote.rs forwards its two sockets to
+//! this machine, and everything else goes as for a local one.
 //!
 //! herdr: each of its tabs is a tab of Aéroport attached to the terminal of a pane (`herdr terminal attach TERMINAL`),
 //! without herdr's own interface. Actions (JSON from the window): `{"op": "tab", "id"}`, `{"op": "close-tab", "id"}`,
@@ -22,6 +25,7 @@
 //! window, which shows a notification when nobody watches the terminal: `{"kind": "blocked" | "done", "agent", "place"}`.
 
 pub mod herdr;
+pub mod remote;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -53,9 +57,26 @@ pub struct Ctx {
     pub out: Box<dyn Fn(Out) + Send + Sync>,
     /// For the adapter's own threads (events of the program)
     pub tx: Sender<In>,
+    /// The machine the program runs on through SSH ("" for this one), and how its link goes (remote.rs)
+    pub host: String,
+    pub link: Option<remote::Link>,
 }
 
 impl Ctx {
+    /// Title of the mode: the program, and its machine when it is another one
+    pub fn title(&self) -> String {
+        if self.host.is_empty() { "herdr".into() } else { format!("herdr · {}", self.host) }
+    }
+    /// What the window shows while the program cannot be reached: a message to translate, with %1 the machine and
+    /// %2 what went wrong (its arguments)
+    pub fn waiting(&self) -> (String, Vec<String>) {
+        let link = self.link.as_ref().and_then(|l| l.lock().ok().and_then(|s| s.clone()));
+        match link {
+            Some((message, detail)) => (message, vec![self.host.clone(), detail]),
+            None if self.host.is_empty() => ("Waiting for herdr…".into(), vec![]),
+            None => ("Connecting to %1…".into(), vec![self.host.clone()]),
+        }
+    }
     pub fn publish(&self, state: String) {
         (self.out)(Out::State(state));
     }
@@ -73,10 +94,16 @@ pub struct Mode {
 }
 
 impl Mode {
-    pub fn start(kind: &str, socket: PathBuf, out: Box<dyn Fn(Out) + Send + Sync>) -> Option<Mode> {
+    pub fn start(
+        kind: &str,
+        socket: PathBuf,
+        host: String,
+        link: Option<remote::Link>,
+        out: Box<dyn Fn(Out) + Send + Sync>,
+    ) -> Option<Mode> {
         let kind = KINDS.iter().copied().find(|k| *k == kind)?;
         let (tx, rx) = mpsc::channel();
-        let ctx = Ctx { socket, out, tx: tx.clone() };
+        let ctx = Ctx { socket, out, tx: tx.clone(), host, link };
         let run: fn(Ctx, Receiver<In>) = match kind {
             "herdr" => herdr::run,
             _ => return None,

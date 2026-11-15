@@ -11,7 +11,7 @@ pub const MODES: &[&str] = &["herdr"];
 pub const MODE_POLICIES: &[&str] = &["ask", "auto", "off"];
 
 /// The settings as JSON for the QML: {"font_size": 12, "padding": 10, "line_spacing": 0, "notify_after": 10,
-/// "window_buttons": true, "modes": {"herdr": "ask"}}
+/// "window_buttons": true, "modes": {"herdr": "auto"}}
 pub fn json_from(text: &str) -> String {
     let sections = parse_sections(text);
     let top = sections.get("");
@@ -34,7 +34,7 @@ pub fn json_from(text: &str) -> String {
         .map(|kind| {
             let v = match modes.and_then(|m| m.get(*kind)) {
                 Some(Val::Str(v)) if MODE_POLICIES.contains(&v.as_str()) => v.as_str(),
-                _ => "ask",
+                _ => "auto",
             };
             format!("\"{kind}\":\"{v}\"")
         })
@@ -102,19 +102,19 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(json_from(""), "{\"font_size\":12,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":true,\"modes\":{\"herdr\":\"ask\"}}");
+        assert_eq!(json_from(""), "{\"font_size\":12,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":true,\"modes\":{\"herdr\":\"auto\"}}");
     }
 
     #[test]
     fn top_keys_only_and_valid_values() {
         let text = "font_size = 14 # bigger\npadding = 999\nwindow_buttons = false\n[theme]\nfont_size = 30\n";
-        assert_eq!(json_from(text), "{\"font_size\":14,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":false,\"modes\":{\"herdr\":\"ask\"}}");
+        assert_eq!(json_from(text), "{\"font_size\":14,\"padding\":10,\"line_spacing\":0,\"notify_after\":10,\"window_buttons\":false,\"modes\":{\"herdr\":\"auto\"}}");
     }
 
     #[test]
     fn modes() {
         assert!(json_from("[modes]\nherdr = \"auto\"\n").contains("\"modes\":{\"herdr\":\"auto\"}"));
-        assert!(json_from("[modes]\nherdr = \"never\"\n").contains("\"modes\":{\"herdr\":\"ask\"}"));
+        assert!(json_from("[modes]\nherdr = \"never\"\n").contains("\"modes\":{\"herdr\":\"auto\"}"));
     }
 
     #[test]

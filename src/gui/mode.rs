@@ -15,6 +15,8 @@ pub mod qobject {
         /// State of the mode (JSON of src/modes), "" while it is off
         #[qproperty(QString, state)]
         #[qproperty(QString, kind)]
+        /// The machine herdr runs on, through SSH (`herdr --remote TARGET`); "" for this one
+        #[qproperty(QString, host)]
         type ModeClient = super::ModeClientRust;
 
         /// The program asks for attention (JSON {kind, agent, place})
@@ -25,8 +27,8 @@ pub mod qobject {
         fn reply(self: Pin<&mut ModeClient>, reply: &QString);
 
         /// Start the mode of `kind` ("herdr"). `pid`: a client of the program started by hand in a tab (its socket is
-        /// the one to use; it is then ended, its tab goes back to the shell), 0 for none. False when the program cannot
-        /// be integrated (a client of another machine).
+        /// the one to use, or its machine through SSH; it is then ended, its tab goes back to the shell), 0 for none.
+        /// False when the program cannot be integrated.
         #[qinvokable]
         fn start(self: Pin<&mut ModeClient>, kind: &QString, pid: i32) -> bool;
         #[qinvokable]
@@ -60,6 +62,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "rightClickPass"]
         fn right_click_pass(self: &ModeClient) -> i32;
+        /// herdr's own full client for the same server (Use herdr's Interface): `herdr`, or `herdr --remote TARGET`
+        #[qinvokable]
+        #[cxx_name = "clientCommand"]
+        fn client_command(self: &ModeClient) -> QStringList;
         #[qinvokable]
         #[cxx_name = "attachCommand"]
         fn attach_command(self: &ModeClient, terminal: &QString, pane: &QString) -> QStringList;
@@ -80,8 +86,13 @@ use crate::modes::{self, Mode, Out, herdr};
 pub struct ModeClientRust {
     state: QString,
     kind: QString,
+    host: QString,
     mode: Option<Mode>,
     socket: PathBuf,
+    /// The SSH link to herdr's machine, for a remote one
+    tunnel: Option<modes::remote::Tunnel>,
+    /// herdr's full client for that server
+    client: Vec<String>,
     /// The program's executable (that of the client replaced, else "herdr" from PATH)
     program: String,
 }
@@ -93,18 +104,37 @@ impl qobject::ModeClient {
             return false;
         }
         let pid = (pid > 0).then_some(pid as u32);
-        let Some(socket) = herdr::socket_for(pid) else { return false };
+        let Some(target) = herdr::target_for(pid) else { return false };
         // The client's own binary (a release binary keeps its name, herdr-linux-x86_64); not a wrapper script's shell
         let program = pid
             .and_then(|p| std::fs::read_link(format!("/proc/{p}/exe")).ok())
             .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(kind.as_str())))
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| kind.clone());
+        let (socket, host, tunnel, client) = match target {
+            herdr::Target::Local(socket) => {
+                let client = vec!["env".into(), format!("HERDR_SOCKET_PATH={}", socket.display()), program.clone()];
+                (socket, String::new(), None, client)
+            }
+            herdr::Target::Remote { ssh, session } => match modes::remote::Tunnel::start(&ssh, session.as_deref()) {
+                Ok(t) => {
+                    let mut client = vec![program.clone(), "--remote".into(), ssh.clone()];
+                    if let Some(s) = session {
+                        client.extend(["--session".into(), s]);
+                    }
+                    (t.socket(), ssh, Some(t), client)
+                }
+                Err(e) => {
+                    eprintln!("fili-term: herdr on {ssh}: {e}");
+                    return false;
+                }
+            },
+        };
         if let Some(p) = pid {
             // The full client leaves (its server and panes go on): the window draws herdr's tabs and sidebar instead
             // SAFETY: plain signal to a process of the user
             unsafe { libc::kill(p as i32, libc::SIGTERM) };
-        } else if std::os::unix::net::UnixStream::connect(&socket).is_err() {
+        } else if tunnel.is_none() && std::os::unix::net::UnixStream::connect(&socket).is_err() {
             start_server(&program, &socket);
         }
         let thread = self.qt_thread();
@@ -120,22 +150,28 @@ impl qobject::ModeClient {
                 Out::Reply(r) => this.reply(&QString::from(&r)),
             });
         });
-        let mode = Mode::start(&kind, socket.clone(), out);
+        let link = tunnel.as_ref().map(|t| t.link.clone());
+        let mode = Mode::start(&kind, socket.clone(), host.clone(), link, out);
         let ok = mode.is_some();
         {
             let mut r = self.as_mut().rust_mut();
             r.mode = mode;
             r.socket = socket;
+            r.tunnel = tunnel;
+            r.client = client;
             r.program = program;
         }
         if ok {
             self.as_mut().set_kind(QString::from(&kind));
+            self.as_mut().set_host(QString::from(&host));
         }
         ok
     }
 
     fn stop(mut self: Pin<&mut Self>) {
         self.as_mut().rust_mut().mode = None;
+        self.as_mut().rust_mut().tunnel = None;
+        self.as_mut().set_host(QString::default());
         self.as_mut().set_state(QString::default());
         self.as_mut().set_kind(QString::default());
     }
@@ -209,6 +245,21 @@ impl qobject::ModeClient {
 
     /// `herdr terminal attach` gives the screen only: the pane's recent output is printed first, so that its older
     /// lines land in the history of the terminal, then the attachment draws the screen over the last ones
+    fn client_command(&self) -> QStringList {
+        let mut l = QStringList::default();
+        if self.client.is_empty() {
+            return l;
+        }
+        // In a shell that stays when herdr leaves (or fails to reach its server: its error stays readable); job control
+        // puts herdr in the foreground of the terminal, as typed by hand
+        let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+        let line: Vec<String> = self.client.iter().map(|a| q(a)).collect();
+        for a in ["sh".to_string(), "-c".to_string(), format!("set -m; {}; exec \"${{SHELL:-sh}}\"", line.join(" "))] {
+            l.append(QString::from(&a));
+        }
+        l
+    }
+
     fn attach_command(&self, terminal: &QString, pane: &QString) -> QStringList {
         let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
         let program = q(&self.program);
