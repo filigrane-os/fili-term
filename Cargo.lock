@@ -364,7 +364,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fili-term"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "cxx",
  "cxx-qt",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "fili-term-daemon"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "alacritty_terminal",
  "env_logger",

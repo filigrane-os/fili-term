@@ -219,6 +219,7 @@ the sessions.
 |---|---|---|---|---|
 | v2.0.0 (V0 figures above) | 41 MB | 7 MB | not measured | 1 terminal |
 | v3.0.0 | 43 MB | 16 MB | 0.1 % / 0.1 % | 1 session open for 20 minutes, the daemon's blocks and history included |
+| v3.1.0 | not measured | not measured | not measured | Debug panel closed by default; the log adds a 2000-line buffer and a file |
 
 The window is within 2 MB of v2.0.0 with panes, workspaces, agents, the journal and the header added. The daemon grew
 by 9 MB (the blocks and their times are kept for each session, and this one had lived for 20 minutes): to watch.

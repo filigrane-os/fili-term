@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.1.0 (2026-11-18)
+
+- Debug panel (View > Debug Logs, Ctrl+Shift+L, action `debug`, in the `[keys]` table like the others): the log of the
+  window selectable above the footer, filter All / Warnings / Errors, Ask Rob, Copy, Clear, Open file.
+- A log file for the window (`~/.local/state/filigrane/logs/fili-term.log`) and one for the daemon
+  (`fili-term-daemon.log`), rotated at 1 MB.
+- A real bug (panic, QML error, Ask Rob) becomes an incident through `fili-incident`; `[debug] incidents = "off"`
+  in `fili-term.toml` turns it off.
+
 ## v3.0.0 (2026-11-15)
 
 ### V3, part A
