@@ -9,8 +9,15 @@ publish = false
 [workspace]
 members = [".", "daemon"]
 
+[features]
+# The window process; the daemon includes logs.rs without it (no Qt there)
+default = ["gui"]
+gui = []
+
 [dependencies]
+env_logger = { version = "0.11", default-features = false }
 libc = "0.2"
+log = "0.4"
 cxx = "1.0.205"
 cxx-qt = "0.10.0"
 cxx-qt-lib = { version = "0.10.0", features = ["qt_gui", "qt_qml"] }

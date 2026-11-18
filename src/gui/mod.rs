@@ -25,6 +25,9 @@ pub fn run(request: &str, app_id: Option<&str>) -> i32 {
         unsafe { std::env::set_var("QT_QUICK_BACKEND", "software") };
     }
     *instance::FIRST_REQUEST.lock().unwrap() = Some(request.to_string());
+    // The log of the window process (the daemon has its own): before Qt starts, so that its messages are caught from the start
+    crate::logs::init("fili-term", "filigrane-os/fili-term", env!("FILI_TERM_VERSION"), crate::proto::incidents_on());
+    crate::logs::capture_qt();
     let mut app = QGuiApplication::new();
     // Wayland app-id (niri rules, fili-term.desktop, menu of the fili-bar)
     QGuiApplication::set_desktop_file_name(&QString::from(app_id.unwrap_or("fili-term")));

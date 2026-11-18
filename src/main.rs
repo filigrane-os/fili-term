@@ -4,6 +4,7 @@
 //! window process already running if there is one (one Qt process for every window).
 mod ctl;
 mod gui;
+mod logs;
 mod modes;
 mod proto;
 mod window;

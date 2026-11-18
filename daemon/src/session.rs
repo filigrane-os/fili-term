@@ -165,11 +165,13 @@ pub fn run() -> i32 {
         eprintln!("fili-term: the daemon is already running");
         return 0;
     }
+    // After the check above: a second daemon that stops at once leaves the log of the first one alone
+    crate::logs::init("fili-term-daemon", "filigrane-os/fili-term", env!("CARGO_PKG_VERSION"), proto::incidents_on());
     let _ = std::fs::remove_file(&path);
     let listener = match UnixListener::bind(&path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("fili-term: {}: {e}", path.display());
+            log::error!("{}: {e}", path.display());
             return 1;
         }
     };

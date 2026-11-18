@@ -1201,6 +1201,11 @@ fn publish_selection(text: &str) {
     set_clipboard_text(text, ClipboardMode::Clipboard);
 }
 
+/// Text for the clipboard (the Debug panel's Copy)
+pub fn copy_to_clipboard(text: &str) {
+    set_clipboard_text(text, ClipboardMode::Clipboard);
+}
+
 fn set_clipboard_text(text: &str, mode: ClipboardMode) {
     let cb = qobject::GuiApplication::clipboard();
     if cb.is_null() {

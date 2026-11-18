@@ -157,6 +157,40 @@ pub fn runtime_dir() -> std::path::PathBuf {
     base.join("fili-term")
 }
 
+/// `[debug] incidents = "off"` in ~/.config/filigrane/fili-term.toml turns the incidents of a real bug off (logs.rs)
+pub fn incidents_on() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
+    incidents_setting(&std::fs::read_to_string(std::path::Path::new(&config).join("filigrane/fili-term.toml")).unwrap_or_default())
+}
+
+fn incidents_setting(text: &str) -> bool {
+    let mut inside = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            inside = line == "[debug]";
+        } else if inside && let Some((key, value)) = line.split_once('=') && key.trim() == "incidents" {
+            return value.split('#').next().unwrap_or("").trim().trim_matches('"') != "off";
+        }
+    }
+    true
+}
+
 pub fn daemon_socket() -> std::path::PathBuf {
     runtime_dir().join("daemon.sock")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::incidents_setting;
+
+    #[test]
+    fn incidents_are_on_unless_the_debug_section_turns_them_off() {
+        assert!(incidents_setting(""));
+        assert!(incidents_setting("incidents = \"off\"\n[theme]\nx = 1"));
+        assert!(incidents_setting("[debug]\nother = 1"));
+        assert!(!incidents_setting("font_size = 12\n[debug]\nincidents = \"off\"  # no\n"));
+        assert!(incidents_setting("[debug]\nincidents = \"on\""));
+    }
 }

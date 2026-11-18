@@ -192,5 +192,15 @@
  "Show Sidebar": "Afficher la barre latérale",
  "Show Command Journal": "Afficher le journal des commandes",
  "Next Agent Waiting": "Agent suivant en attente",
- "Machines…": "Machines…"
+ "Machines…": "Machines…",
+ "Debug Logs": "Journal de débogage",
+ "Debug logs": "Journal de débogage",
+ "All": "Tout",
+ "Warnings": "Avertissements",
+ "Errors": "Erreurs",
+ "entries": "entrées",
+ "Ask Rob": "Demander à Rob",
+ "Open file": "Ouvrir le fichier",
+ "Rob was asked to look at it": "Rob a été prévenu",
+ "Could not record the problem": "Impossible d'enregistrer le problème"
 }

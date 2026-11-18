@@ -33,6 +33,8 @@ fn main() {
                 "qml/Sidebar.qml",
                 "qml/ContextMenu.qml",
                 "qml/TextPrompt.qml",
+                "qml/TextButton.qml",
+                "qml/DebugPanel.qml",
                 "qml/Tab.qml",
             ])
             .qml_file(QmlFile::from("qml/FiliTheme.qml").singleton(true))

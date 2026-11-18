@@ -60,6 +60,32 @@ pub mod qobject {
         /// Translation of a text written in English
         #[qinvokable]
         fn tr(self: &Aeroport, text: &QString) -> QString;
+        /// The Debug panel (View > Debug Logs): the entries after number `since` as JSON {seq, entries: [[level, line]]},
+        /// the log file, clearing the buffer, a path opened with xdg-open, text copied, a problem recorded as an incident
+        /// (Rob is asked; returns its id, "" when it could not be recorded), the state of the panel
+        #[qinvokable]
+        fn logs(self: &Aeroport, since: i32) -> QString;
+        #[qinvokable]
+        #[cxx_name = "logFile"]
+        fn log_file(self: &Aeroport) -> QString;
+        #[qinvokable]
+        #[cxx_name = "clearLogs"]
+        fn clear_logs(self: &Aeroport);
+        #[qinvokable]
+        #[cxx_name = "openPath"]
+        fn open_path(self: &Aeroport, path: &QString);
+        #[qinvokable]
+        #[cxx_name = "copyText"]
+        fn copy_text(self: &Aeroport, text: &QString);
+        #[qinvokable]
+        #[cxx_name = "reportProblem"]
+        fn report_problem(self: &Aeroport, text: &QString) -> QString;
+        #[qinvokable]
+        #[cxx_name = "uiState"]
+        fn ui_state(self: &Aeroport, key: &QString) -> QString;
+        #[qinvokable]
+        #[cxx_name = "setUiState"]
+        fn set_ui_state(self: &Aeroport, key: &QString, value: &QString);
         /// Context file for the assistant (contract of the fili-* applications): the active terminal (view.contextJson)
         /// and the block the user asked about (0: none)
         #[qinvokable]
@@ -294,6 +320,46 @@ impl qobject::Aeroport {
             let _ = std::fs::create_dir_all(dir);
         }
         let _ = std::fs::write(&path, lines.join("\n") + "\n");
+    }
+
+    fn logs(&self, since: i32) -> QString {
+        let (seq, entries) = crate::logs::since(since.max(0) as u64);
+        QString::from(&serde_json::json!({ "seq": seq, "entries": entries }).to_string())
+    }
+
+    fn log_file(&self) -> QString {
+        QString::from(&crate::logs::path().display().to_string())
+    }
+
+    fn clear_logs(&self) {
+        crate::logs::clear();
+    }
+
+    fn open_path(&self, path: &QString) {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(path.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+
+    fn copy_text(&self, text: &QString) {
+        super::terminal::copy_to_clipboard(&text.to_string());
+    }
+
+    fn report_problem(&self, text: &QString) -> QString {
+        let said = text.to_string();
+        let message = if said.trim().is_empty() { "Problem reported from the Debug panel".to_string() } else { said };
+        QString::from(&crate::logs::incident("manual", &message, true).unwrap_or_default())
+    }
+
+    fn ui_state(&self, key: &QString) -> QString {
+        self.ui_get(key)
+    }
+
+    fn set_ui_state(&self, key: &QString, value: &QString) {
+        self.ui_set(key, value)
     }
 
     fn publish_context(&self, view: &QString, asked: i32) {

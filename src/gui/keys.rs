@@ -69,6 +69,7 @@ const DEFAULT: &[(&str, &str)] = &[
     ("scroll-top", "Ctrl+Shift+Home"),
     ("scroll-bottom", "Ctrl+Shift+End"),
     ("toggle-sidebar", "Ctrl+Shift+B"),
+    ("debug", "Ctrl+Shift+L"),
     ("context-menu", "Menu | Shift+F10"),
 ];
 

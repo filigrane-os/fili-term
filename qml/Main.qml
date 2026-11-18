@@ -1435,6 +1435,7 @@ Window {
         else if (name === "window-actions") windowPanel.visible ? windowPanel.close() : windowPanel.open();
         else if (name === "toggle-window-buttons") win.toggleWindowButtons();
         else if (name === "toggle-sidebar") win.toggleSidebar();
+        else if (name === "debug") debug.open = !debug.open;
         else if (v) {
             if (name === "copy") v.copy();
             else if (name === "paste") v.paste();
@@ -1794,7 +1795,7 @@ Window {
     Sidebar {
         id: sidebar
         visible: win.sidebarShown
-        anchors { left: parent.left; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
+        anchors { left: parent.left; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: debug.top }
         width: visible ? FiliTheme.sidebarWidth : 0
         mode: win.sidebarModel
         canLeave: win.modeState !== null
@@ -1816,7 +1817,7 @@ Window {
     // The terminals of the window, one shown
     Item {
         id: stack
-        anchors { left: sidebar.right; right: parent.right; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: footer.top }
+        anchors { left: sidebar.right; right: parent.right; top: tabRow.visible ? tabRow.bottom : toolbarLine.bottom; bottom: debug.top }
     }
 
     // Search in the history, as in Casier: a field in the header (surface, border, accent when focused); without a
@@ -2287,6 +2288,12 @@ Window {
                 }
             }
         }
+    }
+
+    // Debug panel (View > Debug Logs, Ctrl+Shift+L): the log of the window process, a band above the footer
+    DebugPanel {
+        id: debug
+        anchors { bottom: footer.top; left: parent.left; right: parent.right }
     }
 
     // Footer: where the shell started, size of the grid or place in the history; a confirmation or an error takes it whole
