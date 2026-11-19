@@ -872,7 +872,7 @@ Window {
     // modifier of its config
     function herdrProps(terminal, pane, cwd) {
         return { cwd: cwd || "", command: modeClient.attachCommand(terminal, pane), modeTerminal: terminal, modePane: pane,
-                 menuFirst: true, passMods: modeClient.rightClickPass(), primaryScreen: true };
+                 menuFirst: true, selectFirst: true, passMods: modeClient.rightClickPass(), primaryScreen: true };
     }
     // A client of herdr ended while its pane goes on (the SSH link of a remote herdr dropped, herdr restarted): attached
     // again in place after a moment, as long as herdr still has the pane
