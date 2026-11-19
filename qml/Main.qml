@@ -1628,7 +1628,7 @@ Window {
             color: win.attending ? win.onAccent : FiliTheme.text
         }
         // Where the search field starts: at the left of the window buttons (the field and its two arrows)
-        readonly property real windowEdge: win.windowButtons ? windowButton.x : width - FiliTheme.margin
+        readonly property real windowEdge: robButton.visible ? robButton.x : win.windowButtons ? windowButton.x : width - FiliTheme.margin
         readonly property real searchLeft: windowEdge - FiliTheme.space3 - searchNav.width - FiliTheme.space1 - 180
         // The tools, left of the search field: as many buttons as the window has room for (win.headerActions), More for
         // those that did not fit, and the new tab button. Each is also a key and an entry of the bar menu: the header
@@ -1696,6 +1696,13 @@ Window {
             MouseArea { id: windowArea; anchors.fill: parent; hoverEnabled: true; onClicked: windowPanel.visible ? windowPanel.close() : windowPanel.open() }
             Accessible.role: Accessible.Button
             Accessible.name: Aeroport.tr("Window")
+        }
+        // Ask Rob about this application (the failed-command button of a block asks about the command instead)
+        RobButton {
+            id: robButton
+            visible: Aeroport.robAvailable()
+            anchors { right: win.windowButtons ? windowButton.left : parent.right; rightMargin: win.windowButtons ? FiliTheme.space1 : FiliTheme.margin; verticalCenter: parent.verticalCenter }
+            ink: win.attending ? win.onAccent : FiliTheme.text
         }
     }
     Rectangle {

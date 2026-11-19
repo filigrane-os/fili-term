@@ -95,6 +95,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "askRob"]
         fn ask_rob(self: &Aeroport, view: &QString, block: i32, command: &QString, failed: bool);
+        /// "Ask Rob" header button (QML overload of `askRob` without arguments): `fili-chat here` shows the small field of Rob
+        /// scoped to this application; the button shows only where `fili-chat` is installed
+        #[qinvokable]
+        #[cxx_name = "askRob"]
+        fn ask_rob_here(self: &Aeroport);
+        #[qinvokable]
+        #[cxx_name = "robAvailable"]
+        fn rob_available(self: &Aeroport) -> bool;
         /// A notification of the desktop (a long command ended while the window was not watched)
         #[qinvokable]
         fn notify(self: &Aeroport, title: &QString, body: &QString);
@@ -384,6 +392,22 @@ impl qobject::Aeroport {
             .stderr(std::process::Stdio::null())
             .spawn()
             .map(|mut c| std::thread::spawn(move || c.wait()));
+    }
+
+    fn ask_rob_here(&self) {
+        let child = std::process::Command::new("fili-chat")
+            .arg("here")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut child) = child {
+            std::thread::spawn(move || child.wait());
+        }
+    }
+
+    fn rob_available(&self) -> bool {
+        std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("fili-chat").is_file()))
     }
 
     fn window_part(&self, key: &QString) -> bool {
