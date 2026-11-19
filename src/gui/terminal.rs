@@ -170,6 +170,8 @@ pub mod qobject {
         #[qproperty(bool, search_active, cxx_name = "searchActive")]
         /// Name of the process in the foreground of the terminal ("zsh" at the prompt, "herdr", "nvim"…)
         #[qproperty(QString, foreground)]
+        /// A tab of herdr: the left button selects text even when the program takes the mouse
+        #[qproperty(bool, select_first, cxx_name = "selectFirst")]
         /// Right click as herdr's client has it (a tab of herdr): the menu always, even when the program takes the mouse,
         /// unless the modifiers of passMods are held (herdr's right_click_passthrough_modifier; 0: never)
         #[qproperty(bool, menu_first, cxx_name = "menuFirst")]
@@ -721,6 +723,7 @@ pub struct TerminalViewRust {
     reported_pid: u32,
     /// Last key, paste, resize or scroll sent: output right after it is no agent's work
     quiet_at: std::cell::Cell<Option<Instant>>,
+    select_first: bool,
     menu_first: bool,
     pass_mods: i32,
     primary_screen: bool,
@@ -792,6 +795,7 @@ pub struct TerminalViewRust {
 impl Default for TerminalViewRust {
     fn default() -> Self {
         Self {
+            select_first: false,
             menu_first: false,
             pass_mods: 0,
             primary_screen: false,
@@ -1948,6 +1952,10 @@ impl qobject::TerminalView {
     fn report_mouse(mut self: Pin<&mut Self>, mods: u32, pos: &QPointF, button: i32, press: bool, motion: bool) -> bool {
         let m = self.mode;
         if m & mode::MOUSE_MODE == 0 || mods & key::SHIFT != 0 {
+            return false;
+        }
+        // herdr's panes: the left button selects text here (focus and dividers are the window's own)
+        if self.select_first && button == 0 {
             return false;
         }
         if motion && m & (mode::MOUSE_DRAG | mode::MOUSE_MOTION) == 0 {
