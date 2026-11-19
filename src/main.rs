@@ -241,7 +241,7 @@ fn open(args: &[String]) -> i32 {
             }
             "--attach" => attach = it.next().and_then(|v| v.parse().ok()).unwrap_or(0),
             "--hold" => hold = true,
-            "--header" | "--no-header" | "--footer" | "--no-footer" => {}
+            "--header" | "--no-header" | "--footer" | "--no-footer" | "--attention" | "--no-attention" => {}
             "--tab" => tab = true,
             "--mode" => mode = it.next().cloned().unwrap_or_default().replace([',', '\t'], ""),
             "-T" | "--title" => title = it.next().cloned().unwrap_or_default(),

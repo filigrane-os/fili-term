@@ -16,12 +16,15 @@ Rectangle {
     // Toggle state (filter on): drawn with the active surface
     property bool toggled: false
     readonly property bool containsMouse: area.containsMouse
+    // On a band in the accent colour (the header while the window waits for the user): ink is the text colour to use
+    property bool accented: false
+    property color ink: FiliTheme.text
     signal clicked()
 
     width: 28
     height: 24
     radius: FiliTheme.radiusControl
-    color: !enabledState ? "transparent" : area.pressed || toggled ? FiliTheme.surfaceActive : area.containsMouse ? FiliTheme.surfaceHover : "transparent"
+    color: !enabledState ? "transparent" : accented ? (area.pressed || toggled || area.containsMouse ? FiliTheme.alpha(ink, 0.2) : "transparent") : area.pressed || toggled ? FiliTheme.surfaceActive : area.containsMouse ? FiliTheme.surfaceHover : "transparent"
     activeFocusOnTab: false
 
     Icon {
@@ -29,7 +32,7 @@ Rectangle {
         name: b.name
         filled: b.filled
         size: 16
-        color: b.enabledState ? FiliTheme.text : FiliTheme.muted
+        color: b.accented ? b.ink : b.enabledState ? FiliTheme.text : FiliTheme.muted
     }
     Accessible.role: Accessible.Button
     Accessible.name: b.tip

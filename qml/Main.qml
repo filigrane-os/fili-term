@@ -66,11 +66,27 @@ Window {
     // appears while it has something to say (the latest file transaction); nothing is reachable only from the header
     property bool showHeader: Aeroport.windowPart("header")
     property bool showFooter: Aeroport.windowPart("footer")
+    // The window waits for the user (attentionText says why): header and footer take the accent colour when the setting is
+    // on (Settings > Appearance, `fili-theme attention`). Raised by attend() (an agent that asks or finished while the
+    // window is not the active one), lowered by a click on the bands, by an action or when the window is activated.
+    property bool attentionOn: Aeroport.windowPart("attention")
+    property string attentionText: ""
+    readonly property bool attending: attentionOn && attentionText !== ""
+    // Text on the accent: dark or white, whichever reads better
+    readonly property color onAccent: (0.299 * FiliTheme.accentColor.r + 0.587 * FiliTheme.accentColor.g + 0.114 * FiliTheme.accentColor.b) > 0.55 ? "#14181f" : "#ffffff"
+    // Controls of the header while it is in the accent colour: a tint of the text colour instead of the usual surfaces
+    readonly property color tintSurface: FiliTheme.alpha(onAccent, 0.12)
+    readonly property color tintHover: FiliTheme.alpha(onAccent, 0.2)
+    readonly property color tintBorder: FiliTheme.alpha(onAccent, 0.3)
+    function attend(text) { attentionText = text || Aeroport.tr("Needs your attention"); }
+    // The state each agent had at the last tick: a change to "blocked" or "done" is what asks for the user
+    property var agentSeen: ({})
     readonly property bool headerShown: showHeader
-    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || modeNote.flash || asking !== null || error !== "" || resizing || broadcasting
+    readonly property bool footerShown: showFooter || txNotice.wanted || modeOffer.wanted || modeNote.flash || asking !== null || error !== "" || resizing || broadcasting || attending
     Connections {
         target: Aeroport
         function onWindowChanged() {
+            win.attentionOn = Aeroport.windowPart("attention");
             win.showHeader = Aeroport.windowPart("header");
             win.showFooter = Aeroport.windowPart("footer");
         }
@@ -424,8 +440,13 @@ Window {
         onTriggered: {
             for (const t of win.tabs)
                 if (t.modeTab === "")
-                    for (const v of t.leaves)
+                    for (const v of t.leaves) {
                         v.agentTick(win.watchedPane(v));
+                        const was = win.agentSeen[v.sessionId], now = v.agentState;
+                        if (now !== was && v.agent !== "" && (now === "blocked" || now === "done") && !win.active)
+                            win.attend((v.agent || Aeroport.tr("An agent")) + (now === "blocked" ? Aeroport.tr(" is waiting for you") : Aeroport.tr(" finished")) + (v.paneName !== "" ? " · " + v.paneName : ""));
+                        win.agentSeen[v.sessionId] = now;
+                    }
         }
     }
     // The pane of a session, null when it is not in this window
@@ -656,6 +677,8 @@ Window {
                 return;
             const n = JSON.parse(notice);
             const who = n.agent || Aeroport.tr("An agent");
+            if (!win.active)
+                win.attend(n.kind === "blocked" ? Aeroport.tr("%1 is waiting for you").replace("%1", who) : Aeroport.tr("%1 finished").replace("%1", who));
             Aeroport.notify(n.kind === "blocked" ? Aeroport.tr("%1 is waiting for you").replace("%1", who) : Aeroport.tr("%1 finished").replace("%1", who),
                             n.place ? "herdr · " + n.place : "herdr");
         }
@@ -1361,7 +1384,7 @@ Window {
         interval: 150
         onTriggered: if (win.active && win.view) Aeroport.publishContext(win.view.contextJson(), 0)
     }
-    onActiveChanged: contextTimer.restart()
+    onActiveChanged: { contextTimer.restart(); if (active) attentionText = ""; }
     // Another pane takes the keyboard: the resize mode ends (its keys would be taken from that pane's program)
     onViewChanged: { contextTimer.restart(); resizing = false; if (searching && view !== searchView) closeSearch() }
     Connections {
@@ -1436,6 +1459,8 @@ Window {
         else if (name === "toggle-window-buttons") win.toggleWindowButtons();
         else if (name === "toggle-sidebar") win.toggleSidebar();
         else if (name === "debug") debug.open = !debug.open;
+        else if (name === "attention") win.attend("");
+        else if (name === "attention-clear") win.attentionText = "";
         else if (v) {
             if (name === "copy") v.copy();
             else if (name === "paste") v.paste();
@@ -1591,7 +1616,8 @@ Window {
         width: parent.width
         visible: win.headerShown
         height: win.headerShown ? FiliTheme.toolbarHeight : 0
-        color: FiliTheme.background
+        color: win.attending ? FiliTheme.accentColor : FiliTheme.background
+        MouseArea { anchors.fill: parent; z: -1; enabled: win.attending; onClicked: win.attentionText = "" }
         Text {
             anchors { left: parent.left; leftMargin: FiliTheme.margin; right: tools.left; rightMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
             text: win.tabTitle(win.tab)
@@ -1599,7 +1625,7 @@ Window {
             font.family: FiliTheme.font
             font.pixelSize: FiliTheme.size
             font.weight: FiliTheme.weightAccent
-            color: FiliTheme.text
+            color: win.attending ? win.onAccent : FiliTheme.text
         }
         // Where the search field starts: at the left of the window buttons (the field and its two arrows)
         readonly property real windowEdge: win.windowButtons ? windowButton.x : width - FiliTheme.margin
@@ -1620,6 +1646,8 @@ Window {
                     name: modelData.icon
                     tip: Aeroport.tr(modelData.label)
                     hint: win.keyHint(modelData.act)
+                    accented: win.attending
+                    ink: win.onAccent
                     toggled: win.headerOn(modelData)
                     enabledState: win.headerEnabled(modelData)
                     onClicked: win.run(modelData.act)
@@ -1629,10 +1657,12 @@ Window {
                 id: moreButton
                 visible: win.headerVisible.length < win.headerActions.length
                 name: "more"
+                accented: win.attending
+                ink: win.onAccent
                 tip: Aeroport.tr("More")
                 onClicked: { const p = moreButton.mapToItem(null, 0, moreButton.height + FiliTheme.space1); win.moreMenu(p.x, p.y) }
             }
-            IconButton { name: "plus"; tip: Aeroport.tr("New Tab"); hint: win.keyHint("new-tab"); onClicked: win.run("new-tab") }
+            IconButton { name: "plus"; accented: win.attending; ink: win.onAccent; tip: Aeroport.tr("New Tab"); hint: win.keyHint("new-tab"); onClicked: win.run("new-tab") }
         }
         // Window buttons at the far right: close, and the panel of window actions (niri)
         Rectangle {
@@ -1648,7 +1678,7 @@ Window {
                 kind: "close"
                 width: 16
                 height: 16
-                color: closeArea.containsMouse ? "#ffffff" : FiliTheme.text
+                color: closeArea.containsMouse ? "#ffffff" : win.attending ? win.onAccent : FiliTheme.text
             }
             MouseArea { id: closeArea; anchors.fill: parent; hoverEnabled: true; onClicked: win.close() }
             Accessible.role: Accessible.Button
@@ -1661,8 +1691,8 @@ Window {
             width: 28
             height: 24
             radius: FiliTheme.radiusControl
-            color: windowArea.pressed ? FiliTheme.surfaceActive : windowArea.containsMouse || windowPanel.visible ? FiliTheme.surfaceHover : "transparent"
-            WindowGlyph { anchors.centerIn: parent; kind: "window"; width: 16; height: 16 }
+            color: windowArea.pressed || windowArea.containsMouse || windowPanel.visible ? (win.attending ? win.tintHover : windowArea.pressed ? FiliTheme.surfaceActive : FiliTheme.surfaceHover) : "transparent"
+            WindowGlyph { anchors.centerIn: parent; kind: "window"; width: 16; height: 16; color: win.attending ? win.onAccent : FiliTheme.text }
             MouseArea { id: windowArea; anchors.fill: parent; hoverEnabled: true; onClicked: windowPanel.visible ? windowPanel.close() : windowPanel.open() }
             Accessible.role: Accessible.Button
             Accessible.name: Aeroport.tr("Window")
@@ -1832,9 +1862,10 @@ Window {
         width: inHeader ? 180 : 240
         height: 26
         radius: FiliTheme.radiusControl
-        color: FiliTheme.surface
+        readonly property bool tinted: win.attending && inHeader
+        color: tinted ? win.tintSurface : FiliTheme.surface
         border.width: FiliTheme.borderWidth
-        border.color: searchField.activeFocus ? FiliTheme.accentColor : FiliTheme.border
+        border.color: tinted ? (searchField.activeFocus ? win.onAccent : win.tintBorder) : searchField.activeFocus ? FiliTheme.accentColor : FiliTheme.border
         readonly property bool none: win.view !== null && win.view.searchActive && win.view.searchCount === 0
         Text {
             anchors { left: parent.left; leftMargin: FiliTheme.space2; verticalCenter: parent.verticalCenter }
@@ -1842,7 +1873,7 @@ Window {
             text: Aeroport.tr("Search")
             font.family: FiliTheme.font
             font.pixelSize: FiliTheme.size
-            color: FiliTheme.muted
+            color: searchBar.tinted ? FiliTheme.alpha(win.onAccent, 0.6) : FiliTheme.muted
         }
         TextInput {
             id: searchField
@@ -1851,7 +1882,7 @@ Window {
             selectByMouse: true
             font.family: FiliTheme.font
             font.pixelSize: FiliTheme.size
-            color: FiliTheme.text
+            color: searchBar.tinted ? win.onAccent : FiliTheme.text
             selectionColor: FiliTheme.surfaceActive
             selectedTextColor: FiliTheme.text
             Accessible.name: Aeroport.tr("Find in History")
@@ -1909,8 +1940,8 @@ Window {
         x: searchBar.x + searchBar.width + FiliTheme.space1
         y: searchBar.y + (searchBar.height - 24) / 2
         z: 60
-        IconButton { name: "chevron-left"; tip: Aeroport.tr("Previous Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-previous") }
-        IconButton { name: "chevron-right"; tip: Aeroport.tr("Next Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-next") }
+        IconButton { name: "chevron-left"; accented: searchBar.tinted; ink: win.onAccent; tip: Aeroport.tr("Previous Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-previous") }
+        IconButton { name: "chevron-right"; accented: searchBar.tinted; ink: win.onAccent; tip: Aeroport.tr("Next Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-next") }
     }
 
     // Dividers of the tab shown: a line, and a wider band around it that takes the drag (the cursor says which way)
@@ -2302,8 +2333,27 @@ Window {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
         visible: win.footerShown
         height: win.footerShown ? FiliTheme.statusHeight : 0
-        color: FiliTheme.backgroundDeep
+        color: win.attending ? FiliTheme.accentColor : FiliTheme.backgroundDeep
         Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: FiliTheme.borderWidth; color: FiliTheme.border }
+        // What the window waits for, over the usual content (a question or an error of the footer stays above it)
+        Rectangle {
+            visible: win.attending
+            anchors { fill: parent; topMargin: FiliTheme.borderWidth }
+            z: 4
+            color: FiliTheme.accentColor
+            Text {
+                anchors { fill: parent; leftMargin: FiliTheme.margin; rightMargin: FiliTheme.margin }
+                verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                text: win.attentionText
+                font.family: FiliTheme.font
+                font.pixelSize: FiliTheme.sizeSmall
+                font.weight: FiliTheme.weightAccent
+                color: win.onAccent
+            }
+            MouseArea { anchors.fill: parent; onClicked: win.attentionText = "" }
+        }
         Rectangle {
             id: question
             visible: win.asking !== null || win.error !== "" || win.resizing || win.broadcasting
