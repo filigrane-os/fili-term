@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.2.0 (2026-11-19)
+
+- The window asks for attention: the header and footer take the accent colour when an agent waits for the user or finishes while another window is in front (`[window] attention`, `--no-attention`).
+- Header: an Ask Rob button (left of the window button) shows Rob's small floating field for Aéroport (`fili-chat here`); the Ask Rob button of a command block still asks about that command.
+- herdr tabs: the left button selects text even when the program takes the mouse.
+
 ## v3.1.0 (2026-11-18)
 
 - Debug panel (View > Debug Logs, Ctrl+Shift+L, action `debug`, in the `[keys]` table like the others): the log of the
