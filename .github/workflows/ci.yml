@@ -1,0 +1,62 @@
+name: CI
+
+# Every push to main (and every pull request) builds and tests in a Void container, the distribution Aéroport is developed
+# on. On main, when that passes and the version of Cargo.toml has no release yet, the release job publishes it: the tag
+# v<version> and a GitHub release with the matching CHANGELOG.md section as notes. So a new version is a commit that
+# raises `version` in Cargo.toml and adds its CHANGELOG.md section: merging it to main is what tags it (test it live first).
+# The Filigrane xbps repository pins a tag (apps/fili-term/upstream in filigrane-os/filigrane).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cargo
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-
+      - name: Build and test
+        run: |
+          docker run --rm -v "$PWD":/src -w /src -e CARGO_HOME=/src/.cache/cargo -e CARGO_TARGET_DIR=/src/.cache/target \
+            ghcr.io/void-linux/void-glibc-full:latest sh -exc '
+              xbps-install -Syu xbps || true
+              xbps-install -Syu
+              xbps-install -y bash cargo gcc make pkg-config python3 git qt6-base-devel qt6-declarative-devel qt6-svg-devel qt6-wayland
+              make build test'
+
+  release:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release the version of Cargo.toml when it has none yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          test -n "$version" || { echo "::error::no version in Cargo.toml"; exit 1; }
+          tag="v$version"
+          if gh release view "$tag" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "$tag is already released: nothing to do"
+            exit 0
+          fi
+          # The notes: the section of CHANGELOG.md whose heading starts with the version ("## 1.4.1", "## v3.1.0 (date)", "## 0.1.4 - date")
+          awk -v v="$version" '/^## / { h = $2; sub(/^v/, "", h); on = (h == v); next } on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "::error::no section for $version in CHANGELOG.md: the version was raised without its notes"; exit 1; }
+          gh release create "$tag" --target "$GITHUB_SHA" --title "Aéroport $tag" --notes-file notes.md
