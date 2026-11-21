@@ -1,0 +1,113 @@
+{
+  "name": "Aéroport",
+  "app": [
+    { "label": "About Aéroport", "exec": "fili-term ctl --pid %pid action about" }
+  ],
+  "window": [
+    { "label": "Window Actions…", "exec": "fili-term ctl --pid %pid action window-actions" },
+    { "label": "Show Window Buttons", "exec": "fili-term ctl --pid %pid action toggle-window-buttons" }
+  ],
+  "menus": [
+    {
+      "label": "Shell",
+      "children": [
+        { "label": "New Tab", "keys": "Ctrl+Shift+T", "exec": "fili-term ctl --pid %pid action new-tab" },
+        { "label": "New Window", "keys": "Ctrl+Shift+N", "exec": "fili-term ctl --pid %pid action new-window" },
+        { "label": "Show in Casier", "exec": "fili-term ctl --pid %pid action show-in-files" },
+        { "sep": true },
+        { "label": "Integrate Program", "exec": "fili-term ctl --pid %pid action integrate" },
+        { "label": "Machines…", "exec": "fili-term ctl --pid %pid action machines" },
+        { "sep": true },
+        { "label": "Ask Rob About Last Command", "exec": "fili-term ctl --pid %pid action ask-rob" },
+        { "sep": true },
+        { "label": "Settings…", "exec": "xdg-open ~/.config/filigrane/fili-term.toml" },
+        { "sep": true },
+        { "label": "Close Pane", "keys": "Ctrl+Shift+W", "exec": "fili-term ctl --pid %pid action close-pane" },
+        { "label": "Close Tab", "keys": "Ctrl+Alt+Shift+W", "exec": "fili-term ctl --pid %pid action close-tab" },
+        { "label": "Close Window", "keys": "Ctrl+Shift+Q", "exec": "fili-term ctl --pid %pid action close-window" }
+      ]
+    },
+    {
+      "label": "Edit",
+      "children": [
+        { "label": "Copy", "keys": "Ctrl+Shift+C", "exec": "fili-term ctl --pid %pid action copy" },
+        { "label": "Paste", "keys": "Ctrl+Shift+V", "exec": "fili-term ctl --pid %pid action paste" },
+        { "sep": true },
+        { "label": "Copy Last Output", "keys": "Ctrl+Shift+O", "exec": "fili-term ctl --pid %pid action copy-last-output" },
+        { "label": "Copy Last Command", "exec": "fili-term ctl --pid %pid action copy-last-command" },
+        { "sep": true },
+        { "label": "Find…", "keys": "Ctrl+Shift+F", "exec": "fili-term ctl --pid %pid action find" },
+        { "label": "Find Next", "keys": "Ctrl+Shift+G", "exec": "fili-term ctl --pid %pid action find-next" },
+        { "label": "Find Previous", "keys": "Ctrl+Shift+H", "exec": "fili-term ctl --pid %pid action find-previous" }
+      ]
+    },
+    {
+      "label": "View",
+      "children": [
+        { "label": "Zoom In", "keys": "Ctrl++", "exec": "fili-term ctl --pid %pid action zoom-in" },
+        { "label": "Zoom Out", "keys": "Ctrl+-", "exec": "fili-term ctl --pid %pid action zoom-out" },
+        { "label": "Actual Size", "keys": "Ctrl+0", "exec": "fili-term ctl --pid %pid action zoom-reset" },
+        { "sep": true },
+        { "label": "Show Command Journal", "keys": "Ctrl+Alt+J", "exec": "fili-term ctl --pid %pid action toggle-journal" },
+        { "label": "Show Sidebar", "keys": "Ctrl+Shift+B", "exec": "fili-term ctl --pid %pid action toggle-sidebar" },
+        { "label": "Debug Logs", "keys": "Ctrl+Shift+L", "exec": "fili-term ctl --pid %pid action debug" },
+        { "sep": true },
+        { "label": "Page Up", "keys": "Shift+PgUp", "exec": "fili-term ctl --pid %pid action page-up" },
+        { "label": "Page Down", "keys": "Shift+PgDown", "exec": "fili-term ctl --pid %pid action page-down" },
+        { "label": "Top of History", "exec": "fili-term ctl --pid %pid action scroll-top" },
+        { "label": "Back to Prompt", "exec": "fili-term ctl --pid %pid action scroll-bottom" },
+        { "sep": true },
+        { "label": "Previous Command", "keys": "Ctrl+Shift+Up", "exec": "fili-term ctl --pid %pid action previous-command" },
+        { "label": "Next Command", "keys": "Ctrl+Shift+Down", "exec": "fili-term ctl --pid %pid action next-command" }
+      ]
+    },
+    {
+      "label": "Tabs",
+      "children": [
+        { "label": "New Tab in Worktree…", "exec": "fili-term ctl --pid %pid action new-worktree" },
+        { "sep": true },
+        { "label": "Next Tab", "keys": "Ctrl+PgDown", "exec": "fili-term ctl --pid %pid action next-tab" },
+        { "label": "Previous Tab", "keys": "Ctrl+PgUp", "exec": "fili-term ctl --pid %pid action previous-tab" },
+        { "sep": true },
+        { "label": "Next Workspace", "keys": "Ctrl+Alt+PgDown", "exec": "fili-term ctl --pid %pid action next-workspace" },
+        { "label": "Previous Workspace", "keys": "Ctrl+Alt+PgUp", "exec": "fili-term ctl --pid %pid action previous-workspace" },
+        { "label": "New Workspace…", "exec": "fili-term ctl --pid %pid action new-workspace" }
+      ]
+    },
+    {
+      "label": "Panes",
+      "children": [
+        { "label": "Split Right", "keys": "Ctrl+Shift+D", "exec": "fili-term ctl --pid %pid action split-right" },
+        { "label": "Split Down", "keys": "Ctrl+Shift+E", "exec": "fili-term ctl --pid %pid action split-down" },
+        { "sep": true },
+        { "label": "Type in Every Pane", "keys": "Ctrl+Alt+I", "exec": "fili-term ctl --pid %pid action broadcast" },
+        { "label": "Zoom Pane", "keys": "Ctrl+Shift+Return", "exec": "fili-term ctl --pid %pid action zoom-pane" },
+        { "label": "Rename Pane…", "exec": "fili-term ctl --pid %pid action rename-pane" },
+        { "label": "Open History in the Editor", "keys": "Ctrl+Alt+Shift+E", "exec": "fili-term ctl --pid %pid action edit-scrollback" },
+        { "label": "Commands…", "keys": "Ctrl+Alt+P", "exec": "fili-term ctl --pid %pid action commands" },
+        { "label": "Next Agent Waiting", "keys": "Ctrl+Alt+A", "exec": "fili-term ctl --pid %pid action next-agent" },
+        { "sep": true },
+        {
+          "label": "Select Pane",
+          "children": [
+            { "label": "Pane on the Left", "keys": "Ctrl+Alt+Left", "exec": "fili-term ctl --pid %pid action focus-left" },
+            { "label": "Pane on the Right", "keys": "Ctrl+Alt+Right", "exec": "fili-term ctl --pid %pid action focus-right" },
+            { "label": "Pane Above", "keys": "Ctrl+Alt+Up", "exec": "fili-term ctl --pid %pid action focus-up" },
+            { "label": "Pane Below", "keys": "Ctrl+Alt+Down", "exec": "fili-term ctl --pid %pid action focus-down" }
+          ]
+        },
+        {
+          "label": "Resize Pane",
+          "children": [
+            { "label": "Resize Mode", "keys": "Ctrl+Alt+R", "exec": "fili-term ctl --pid %pid action resize-mode" },
+            { "sep": true },
+            { "label": "Move Divider Left", "keys": "Ctrl+Alt+Shift+Left", "exec": "fili-term ctl --pid %pid action resize-left" },
+            { "label": "Move Divider Right", "keys": "Ctrl+Alt+Shift+Right", "exec": "fili-term ctl --pid %pid action resize-right" },
+            { "label": "Move Divider Up", "keys": "Ctrl+Alt+Shift+Up", "exec": "fili-term ctl --pid %pid action resize-up" },
+            { "label": "Move Divider Down", "keys": "Ctrl+Alt+Shift+Down", "exec": "fili-term ctl --pid %pid action resize-down" }
+          ]
+        }
+      ]
+    }
+  ]
+}
