@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.3.0 (2026-11-21)
+
+- Everything Aeroport brings to the desktop now lives in this repository and is installed with it (`make install`): besides the launcher and icon, what the Filigrane shell reads, in `shell/`, instead of being kept in the distribution's repository: the fallback menu of the bar (`shell/appmenu/fili-term.json`) and the brief of Rob for this application (`shell/rob/fili-term.md`). The package puts it in `/usr/share/filigrane/shell/`, `fili-bar link-system` (run at login) links it into the menus; a menu or brief of your own with the same name wins.
+- New `make install-data` (everything but the programs). `scripts/check-shell-menu.py` (run by `make test`, so by the CI) checks that the bar menu only uses actions of the window (the shortcuts are configurable, so they are not compared) and that the brief of Rob exists.
+
 ## v3.2.0 (2026-11-19)
 
 - The window asks for attention: the header and footer take the accent colour when an agent waits for the user or finishes while another window is in front (`[window] attention`, `--no-attention`).
