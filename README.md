@@ -57,7 +57,7 @@ idle prompt) and Ask Rob. Ctrl+Shift+Up/Down jumps between commands, Ctrl+Shift+
 From the command line (session `$FILI_TERM_SESSION` by default, or `--session ID`):
 `fili-term blocks` (JSON list), `fili-term output [BLOCK]` (output of a block, the last command by default),
 `fili-term send TEXT` (types text at the prompt without running it). Ask Rob writes the window's context file
-(`$XDG_RUNTIME_DIR/fili/context/PID.json`: session, folder, last commands) and runs `fili-chat ask`; the assistant
+(`$XDG_RUNTIME_DIR/fili/context/PID.json`: session, folder, last commands) and runs `fili-ai ask`; the assistant
 reads the output itself with `fili-term output`.
 
 Colour queries (OSC 10/11/4) are answered with the theme's palette.

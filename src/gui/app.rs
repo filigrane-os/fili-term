@@ -95,8 +95,8 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "askRob"]
         fn ask_rob(self: &Aeroport, view: &QString, block: i32, command: &QString, failed: bool);
-        /// "Ask Rob" header button (QML overload of `askRob` without arguments): `fili-chat here` shows the small field of Rob
-        /// scoped to this application; the button shows only where `fili-chat` is installed
+        /// "Ask Rob" header button (QML overload of `askRob` without arguments): `fili-ai here` shows the small field of Rob
+        /// scoped to this application; the button shows only where the assistant (`fili-ai-daemon`) is installed
         #[qinvokable]
         #[cxx_name = "askRob"]
         fn ask_rob_here(self: &Aeroport);
@@ -385,7 +385,7 @@ impl qobject::Aeroport {
             tr("Explain the output of `%1` in my terminal (Aéroport, block %2).")
         };
         let question = question.replace("%1", &command).replace("%2", &block.to_string());
-        let _ = std::process::Command::new("fili-chat")
+        let _ = std::process::Command::new("fili-ai")
             .args(["ask", &question])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -395,7 +395,7 @@ impl qobject::Aeroport {
     }
 
     fn ask_rob_here(&self) {
-        let child = std::process::Command::new("fili-chat")
+        let child = std::process::Command::new("fili-ai")
             .arg("here")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -407,7 +407,7 @@ impl qobject::Aeroport {
     }
 
     fn rob_available(&self) -> bool {
-        std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("fili-chat").is_file()))
+        std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("fili-ai-daemon").is_file()))
     }
 
     fn window_part(&self, key: &QString) -> bool {
