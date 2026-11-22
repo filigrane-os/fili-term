@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Reference validator of the ctl catalogs of the Filigrane API (docs/api.md, "Control").
+
+The catalog of an application, shell/ctl/<app_id>.json, is a contract: this program is its definition. The applications keep a
+byte-identical copy as scripts/fili-api-lint (the distribution's tests compare it with this file), so that the six of them
+cannot drift apart. Standard library only.
+
+    fili-api-lint FILE...                 the format (rules below); `ok FILE` or one `x FILE: problem` per line, exit 1 on any
+    fili-api-lint --app ROOT [FILE...]    also the agreement with the application's source (default FILE: ROOT/shell/ctl/*.json):
+                                          the verbs are the ones of the usage line of `<program> ctl` (src/**/*.rs), the actions
+                                          the ones of the window (ACTIONS of src/ctl.rs, else the table of qml/Main.qml)
+    fili-api-lint --app ROOT --write      rewrites `actions` from the source (names, then the label and shortcut of the menu
+                                          entry shell/appmenu/<app_id>.json); keeps the `args` already written
+    fili-api-lint --version
+
+Format, version 1 (a key that is not listed is an error: an application cannot invent one):
+
+  v              1
+  app_id         lowercase letters, digits, hyphens; the name of the file
+  name           the name shown to the user (the alias), 1-40 characters
+  program        the program, same characters as app_id
+  ctl            exactly "<program> ctl --pid %pid"
+  commands       the verbs of `<program> ctl`, at least one, each:
+      verb       lowercase letters, digits, hyphens; unique
+      args       optional, free synopsis on one line, 120 characters at most (`[--add | --none] < paths`)
+      summary    1-120 characters on one line, starts with a capital letter, no final full stop
+      reads      true when the verb only reads and changes nothing, else false
+  actions        optional: the names `action NAME` accepts (needs the verb `action`), each:
+      name       lowercase letters, digits, hyphens; unique
+      label      optional, the menu label, 1-60 characters
+      keys       optional, the shortcut as the menu shows it, 1-30 characters
+      args       optional, the argument: placeholders in capitals (`TRACK_ID`, `[NAME]`, `PATH [MODE]`); `[X]` = optional (the
+                 action then opens its own dialog or does its default); an optional one never comes before a required one
+  action_patterns optional: families of actions with a parameter that `actions` cannot list, each:
+      pattern    `name:<param>` (`open-chat:<id>`), lowercase
+      summary    same rules as a command's
+"""
+import glob
+import json
+import pathlib
+import re
+import sys
+
+VERSION = 1
+NAME = re.compile(r"^[a-z][a-z0-9-]*$")
+ACTION = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+PLACEHOLDER = re.compile(r"^\[?[A-Z][A-Z0-9_]*\]?$")
+PATTERN = re.compile(r"^[a-z0-9-]+:<[a-z_]+>$")
+
+
+def text(v, lo, hi):
+    return isinstance(v, str) and lo <= len(v) <= hi and "\n" not in v
+
+
+def summary_problem(s):
+    if not text(s, 1, 120):
+        return "must be 1-120 characters on one line"
+    if not s[0].isupper():
+        return "must start with a capital letter"
+    if s.endswith("."):
+        return "must not end with a full stop"
+    return None
+
+
+def args_problem(a):
+    words = a.split(" ")
+    if not all(PLACEHOLDER.match(w) and w.count("[") == w.count("]") and (w.startswith("[") == w.endswith("]")) for w in words):
+        return "placeholders in capitals, `[X]` when optional (TRACK_ID, [NAME])"
+    optional = False
+    for w in words:
+        if w.startswith("["):
+            optional = True
+        elif optional:
+            return "a required placeholder after an optional one"
+    return None
+
+
+def keys_problem(obj, allowed, required, where):
+    out = []
+    for k in obj:
+        if k not in allowed:
+            out.append(f"{where}: unknown key {k}")
+    for k in required:
+        if k not in obj:
+            out.append(f"{where}: missing {k}")
+    return out
+
+
+def lint(c, stem=None):
+    """Problems of a decoded catalog (the format only), one string each."""
+    if not isinstance(c, dict):
+        return ["not a JSON object"]
+    p = keys_problem(c, {"v", "app_id", "name", "program", "ctl", "commands", "actions", "action_patterns"},
+                     ("v", "app_id", "name", "program", "ctl", "commands"), "catalog")
+    if p:
+        return p
+    if c["v"] != VERSION or isinstance(c["v"], bool):
+        p.append(f"v is {c['v']!r}: this tool understands {VERSION}")
+        return p
+    if not (isinstance(c["app_id"], str) and NAME.match(c["app_id"])):
+        p.append("app_id: lowercase letters, digits and hyphens")
+    elif stem is not None and stem != c["app_id"]:
+        p.append(f"the file is named {stem}.json, app_id is {c['app_id']}")
+    if not text(c["name"], 1, 40):
+        p.append("name: 1-40 characters")
+    if not (isinstance(c["program"], str) and NAME.match(c["program"])):
+        p.append("program: lowercase letters, digits and hyphens")
+    elif c["ctl"] != f"{c['program']} ctl --pid %pid":
+        p.append(f"ctl must be exactly \"{c['program']} ctl --pid %pid\"")
+    commands = c["commands"]
+    verbs = []
+    if not isinstance(commands, list) or not commands:
+        p.append("commands: a list of at least one verb")
+    else:
+        for i, cmd in enumerate(commands):
+            where = f"commands[{i}]"
+            if not isinstance(cmd, dict):
+                p.append(f"{where}: not an object")
+                continue
+            p += keys_problem(cmd, {"verb", "args", "summary", "reads"}, ("verb", "summary", "reads"), where)
+            if not (isinstance(cmd.get("verb"), str) and NAME.match(cmd["verb"])):
+                p.append(f"{where}: verb: lowercase letters, digits and hyphens")
+            else:
+                verbs.append(cmd["verb"])
+                where = f"verb {cmd['verb']}"
+            if "summary" in cmd and (problem := summary_problem(cmd["summary"])):
+                p.append(f"{where}: summary {problem}")
+            if "args" in cmd and not text(cmd["args"], 1, 120):
+                p.append(f"{where}: args: 1-120 characters on one line")
+            if "reads" in cmd and not isinstance(cmd["reads"], bool):
+                p.append(f"{where}: reads must be true or false")
+        for v in sorted({v for v in verbs if verbs.count(v) > 1}):
+            p.append(f"verb {v} is listed twice")
+    actions = c.get("actions")
+    if actions is not None:
+        if "action" not in verbs:
+            p.append("actions needs the verb `action`")
+        if not isinstance(actions, list):
+            p.append("actions: a list")
+        else:
+            names = []
+            for i, a in enumerate(actions):
+                where = f"actions[{i}]"
+                if not isinstance(a, dict):
+                    p.append(f"{where}: not an object")
+                    continue
+                p += keys_problem(a, {"name", "label", "keys", "args"}, ("name",), where)
+                if not (isinstance(a.get("name"), str) and ACTION.match(a["name"])):
+                    p.append(f"{where}: name: lowercase letters, digits and hyphens")
+                    continue
+                names.append(a["name"])
+                where = f"action {a['name']}"
+                if "label" in a and not text(a["label"], 1, 60):
+                    p.append(f"{where}: label: 1-60 characters")
+                if "keys" in a and not text(a["keys"], 1, 30):
+                    p.append(f"{where}: keys: 1-30 characters")
+                if "args" in a and (not isinstance(a["args"], str) or (problem := args_problem(a["args"]))):
+                    p.append(f"{where}: args: {problem if isinstance(a['args'], str) else 'a string'}")
+            for n in sorted({n for n in names if names.count(n) > 1}):
+                p.append(f"action {n} is listed twice")
+    patterns = c.get("action_patterns")
+    if patterns is not None:
+        if "action" not in verbs:
+            p.append("action_patterns needs the verb `action`")
+        if not isinstance(patterns, list):
+            p.append("action_patterns: a list")
+        else:
+            for i, a in enumerate(patterns):
+                where = f"action_patterns[{i}]"
+                if not isinstance(a, dict):
+                    p.append(f"{where}: not an object")
+                    continue
+                p += keys_problem(a, {"pattern", "summary"}, ("pattern", "summary"), where)
+                if "pattern" in a and not (isinstance(a["pattern"], str) and PATTERN.match(a["pattern"])):
+                    p.append(f"{where}: pattern: name:<param> in lowercase (open-chat:<id>)")
+                if "summary" in a and (problem := summary_problem(a["summary"])):
+                    p.append(f"{where}: summary {problem}")
+    return p
+
+
+# ---- agreement with the source of the application (--app) ------------------------------------------------------------------
+
+
+def source_actions(root):
+    """Names of the actions of the window, in the order of the source: the ACTIONS table of src/ctl.rs, else the menuActions
+    table of qml/Main.qml (Casier), else its `"name": { on: ...` table (Baladeur, Cassette)."""
+    ctl = root / "src/ctl.rs"
+    if ctl.is_file():
+        m = re.search(r"pub const ACTIONS: &\[&str\] = &\[(.*?)\];", ctl.read_text(), re.S)
+        if m:
+            return re.findall(r'"([^"]+)"', m.group(1))
+    main = root / "qml/Main.qml"
+    if main.is_file():
+        src = main.read_text()
+        m = re.search(r"menuActions: \(\{(.*?)\}\)", src, re.S)
+        if m:
+            return re.findall(r'"([a-z0-9-]+)":\s*\w+', m.group(1))
+        return re.findall(r'^\s+"([a-z0-9-]+)": \{ on:', src, re.M)
+    return None
+
+
+def source_verbs(root, program):
+    """Verbs of the usage line `usage: <program> ctl [--pid PID] verb ... | verb ...` (a line can be cut by a backslash)."""
+    for src in sorted(root.glob("src/**/*.rs")):
+        m = re.search(r"usage: " + re.escape(program) + r' ctl \[--pid PID\] ((?:[^"\\]|\\\n\s*)+)"', src.read_text())
+        if m:
+            usage = re.sub(r"\\\n\s*", "", m.group(1))
+            # Alternatives are separated by " | " outside the brackets ("select [--add | --none]" is one)
+            return {alt.strip().split()[0] for alt in re.split(r"\s\|\s(?![^\[]*\])", usage) if alt.strip()}
+    return None
+
+
+def menu_entries(root, app_id):
+    """name -> (label, keys) of the entries of the fallback menu that run `action NAME`."""
+    path = root / f"shell/appmenu/{app_id}.json"
+    found = {}
+    if not path.is_file():
+        return found
+
+    def walk(items):
+        for e in items:
+            if "children" in e:
+                walk(e["children"])
+            m = re.search(r" action ([a-z0-9-]+)$", e.get("exec", ""))
+            if m and m.group(1) not in found:
+                found[m.group(1)] = (e.get("label", ""), e.get("keys", ""))
+
+    menu = json.loads(path.read_text())
+    walk(menu.get("app", []) + menu.get("window", []))
+    for top in menu.get("menus", []):
+        walk(top["children"])
+    return found
+
+
+def write_actions(c, root):
+    names = source_actions(root)
+    if names is None:
+        return "no table of actions in the source"
+    menu = menu_entries(root, c["app_id"])
+    old = {a["name"]: a for a in c.get("actions", []) if isinstance(a, dict) and "name" in a}
+    out = []
+    for n in names:
+        entry = {"name": n}
+        if menu.get(n, ("", ""))[0]:
+            entry["label"] = menu[n][0]
+        if menu.get(n, ("", ""))[1]:
+            entry["keys"] = menu[n][1]
+        if "args" in old.get(n, {}):
+            entry["args"] = old[n]["args"]
+        out.append(entry)
+    c["actions"] = out
+    return None
+
+
+def agree(c, root):
+    """Problems of the agreement between the catalog and the source of the application."""
+    p = []
+    declared = source_verbs(root, c["program"])
+    if declared is None:
+        p.append(f"no usage line of `{c['program']} ctl` in src/")
+    else:
+        mine = {cmd["verb"] for cmd in c["commands"]}
+        p += [f"the program has the verb {v}, the catalog does not" for v in sorted(declared - mine)]
+        p += [f"the catalog has the verb {v}, the program does not" for v in sorted(mine - declared)]
+    real = source_actions(root)
+    if "actions" in c:
+        if real is None:
+            p.append("no table of actions in the source")
+        else:
+            mine = [a["name"] for a in c["actions"]]
+            p += [f"the window has the action {a}, the catalog does not (fili-api-lint --app . --write)" for a in sorted(set(real) - set(mine))]
+            p += [f"the catalog has the action {a}, the window does not (fili-api-lint --app . --write)" for a in sorted(set(mine) - set(real))]
+    elif real:
+        p.append("the window has actions: the catalog lists them in `actions` (fili-api-lint --app . --write)")
+    return p
+
+
+def main(argv):
+    args = argv[1:]
+    if args == ["--version"]:
+        print(f"fili-api-lint format {VERSION}")
+        return 0
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if args else 2
+    root, write, files = None, False, []
+    it = iter(args)
+    for a in it:
+        if a == "--app":
+            root = pathlib.Path(next(it, ".")).resolve()
+        elif a == "--write":
+            write = True
+        else:
+            files.append(a)
+    if write and root is None:
+        print("x --write needs --app ROOT")
+        return 2
+    if root is not None and not files:
+        files = sorted(glob.glob(str(root / "shell/ctl/*.json")))
+        if not files:
+            print(f"x {root}/shell/ctl: no catalog")
+            return 1
+    bad = False
+    for f in files:
+        try:
+            c = json.load(open(f))
+        except (OSError, ValueError) as e:
+            print(f"x {f}: {e}")
+            bad = True
+            continue
+        problems = lint(c, pathlib.Path(f).stem)
+        if write and not problems:
+            if (e := write_actions(c, root)):
+                problems.append(e)
+            else:
+                with open(f, "w") as out:
+                    json.dump(c, out, indent=2, ensure_ascii=False)
+                    out.write("\n")
+                problems = lint(c, pathlib.Path(f).stem)
+        if not problems and root is not None:
+            problems = agree(c, root)
+        for line in problems:
+            print(f"x {f}: {line}")
+        if problems:
+            bad = True
+        else:
+            print(f"ok {f}")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

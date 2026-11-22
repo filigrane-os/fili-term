@@ -31,7 +31,7 @@ build:
 test:
 	$(CARGO) test --release --locked --workspace
 	python3 -I scripts/check-shell-menu.py
-	python3 -I scripts/check-ctl-catalog.py
+	python3 -I scripts/fili-api-lint --app .
 
 install: build install-data
 	install -Dm755 $(TARGET_DIR)/release/fili-term $(DESTDIR)$(BINDIR)/fili-term
