@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.4.0 (2026-11-22)
+
+- The assistant is now named Lia: the header button and the menu entry say "Ask Lia", and the hidden brief is `shell/lia/<app_id>.md` (the older `rob/` is still read).
+- A catalog of the commands of the window (`shell/ctl/<app_id>.json`, `fili-api show`) that follows the shared format; the assistant is driven by `fili-ai` as one client of the Filigrane contracts.
+
 ## v3.3.0 (2026-11-21)
 
 - Everything Aeroport brings to the desktop now lives in this repository and is installed with it (`make install`): besides the launcher and icon, what the Filigrane shell reads, in `shell/`, instead of being kept in the distribution's repository: the fallback menu of the bar (`shell/appmenu/fili-term.json`) and the brief of Rob for this application (`shell/rob/fili-term.md`). The package puts it in `/usr/share/filigrane/shell/`, `fili-bar link-system` (run at login) links it into the menus; a menu or brief of your own with the same name wins.
