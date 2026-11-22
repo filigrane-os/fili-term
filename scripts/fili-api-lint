@@ -5,7 +5,10 @@ The catalog of an application, shell/ctl/<app_id>.json, is a contract: this prog
 byte-identical copy as scripts/fili-api-lint (the distribution's tests compare it with this file), so that the six of them
 cannot drift apart. Standard library only.
 
-    fili-api-lint FILE...                 the format (rules below); `ok FILE` or one `x FILE: problem` per line, exit 1 on any
+    fili-api-lint [catalog] FILE...       the format (rules below); `ok FILE` or one `x FILE: problem` per line, exit 1 on any
+    fili-api-lint context FILE...         a context file ($XDG_RUNTIME_DIR/fili/context/<pid>.json), see "Context" below
+    fili-api-lint incident FILE...        an incident file (~/.local/state/filigrane/incidents/<id>.json), see "Incident" below
+    fili-api-lint ai-ui FILE...           the assistant's state file ($XDG_RUNTIME_DIR/fili/ai/ui.json), see "Assistant state" below
     fili-api-lint --app ROOT [FILE...]    also the agreement with the application's source (default FILE: ROOT/shell/ctl/*.json):
                                           the verbs are the ones of the usage line of `<program> ctl` (src/**/*.rs), the actions
                                           the ones of the window (ACTIONS of src/ctl.rs, else the table of qml/Main.qml)
@@ -34,6 +37,31 @@ Format, version 1 (a key that is not listed is an error: an application cannot i
   action_patterns optional: families of actions with a parameter that `actions` cannot list, each:
       pattern    `name:<param>` (`open-chat:<id>`), lowercase
       summary    same rules as a command's
+
+Context, version 1 (what an application shows of its window, read on demand by fili-context and the assistant):
+  app            the name shown to the user (the alias), 1-40 characters
+  pid            the process id, the number of the file name (<pid>.json)
+  about          1-8000 characters: what the other keys mean, for a reader that has never seen the application
+  v              optional, 1
+  location, title    optional strings; selection: optional list of strings; selection_count: optional whole number
+  any other key  is the application's own (`session`, `blocks`...): lowercase snake_case, explained by `about`
+  The file is at most 64 KiB (a context is a summary, not a copy of the data).
+
+Incident, version 1 (what an application writes when it meets a bug; fili-incident reads and completes it):
+  id, app, repo, version, kind, signature, message, when, state, system, log   all required
+  id             letters, digits, dots, hyphens, underscores; the name of the file
+  kind           a lowercase word (panic, qml, manual...)
+  signature      16 hexadecimal digits (the same problem has the same one on every machine)
+  when           the time as a whole number of seconds (not a string)
+  state          new, notified, ignored or reported
+  log            a list of strings (the last lines of the log)
+  issue, pr      optional strings, written by fili-incident when it reports; v: optional, 1
+
+Assistant state, version 1 (what the assistant's interface tells the shell; AiState.qml reads it):
+  v              1
+  open, focused, busy   booleans: the interface is shown, has the keyboard focus, a session is working
+  attention      "waiting" (a permission is asked), "done" (an answer finished and unread) or ""
+  all five keys are required and no other key is allowed
 """
 import glob
 import json
@@ -178,6 +206,94 @@ def lint(c, stem=None):
     return p
 
 
+def lint_context(c, stem=None):
+    """Problems of a decoded context file."""
+    if not isinstance(c, dict):
+        return ["not a JSON object"]
+    p = []
+    for k in ("app", "pid", "about"):
+        if k not in c:
+            p.append(f"missing {k}")
+    if "v" in c and (c["v"] != VERSION or isinstance(c["v"], bool)):
+        p.append(f"v is {c['v']!r}: this tool understands {VERSION}")
+    if "app" in c and not text(c["app"], 1, 40):
+        p.append("app: 1-40 characters")
+    if "pid" in c and (not isinstance(c["pid"], int) or isinstance(c["pid"], bool) or c["pid"] <= 0):
+        p.append("pid: a positive whole number")
+    elif "pid" in c and stem is not None and stem.isdigit() and int(stem) != c["pid"]:
+        p.append(f"the file is named {stem}.json, pid is {c['pid']}")
+    if "about" in c and not (isinstance(c["about"], str) and 1 <= len(c["about"]) <= 8000):
+        p.append("about: 1-8000 characters")
+    for k in ("location", "title"):
+        if k in c and not isinstance(c[k], str):
+            p.append(f"{k}: a string")
+    if "selection" in c and not (isinstance(c["selection"], list) and all(isinstance(x, str) for x in c["selection"])):
+        p.append("selection: a list of strings")
+    if "selection_count" in c and (not isinstance(c["selection_count"], int) or isinstance(c["selection_count"], bool) or c["selection_count"] < 0):
+        p.append("selection_count: a whole number")
+    for k in c:
+        if not re.match(r"^[a-z][a-z0-9_]*$", k):
+            p.append(f"key {k}: lowercase snake_case")
+    if len(json.dumps(c, ensure_ascii=False).encode()) > 64 * 1024:
+        p.append("larger than 64 KiB: a context is a summary")
+    return p
+
+
+INCIDENT_KEYS = {"id", "app", "repo", "version", "kind", "signature", "message", "when", "state", "system", "log", "issue", "pr", "v"}
+INCIDENT_REQUIRED = ("id", "app", "repo", "version", "kind", "signature", "message", "when", "state", "system", "log")
+
+
+def lint_incident(c, stem=None):
+    """Problems of a decoded incident file."""
+    if not isinstance(c, dict):
+        return ["not a JSON object"]
+    p = keys_problem(c, INCIDENT_KEYS, INCIDENT_REQUIRED, "incident")
+    if p:
+        return p
+    if "v" in c and (c["v"] != VERSION or isinstance(c["v"], bool)):
+        p.append(f"v is {c['v']!r}: this tool understands {VERSION}")
+    if not (isinstance(c["id"], str) and re.match(r"^[A-Za-z0-9._-]+$", c["id"])):
+        p.append("id: letters, digits, dots, hyphens and underscores")
+    elif stem is not None and stem != c["id"]:
+        p.append(f"the file is named {stem}.json, id is {c['id']}")
+    for k in ("app", "repo", "version", "system"):
+        if not text(c[k], 1, 200):
+            p.append(f"{k}: 1-200 characters on one line")
+    if not (isinstance(c["kind"], str) and re.match(r"^[a-z][a-z0-9_-]*$", c["kind"])):
+        p.append("kind: a lowercase word (panic, qml, manual...)")
+    if not (isinstance(c["signature"], str) and re.match(r"^[0-9a-f]{16}$", c["signature"])):
+        p.append("signature: 16 hexadecimal digits")
+    if not isinstance(c["message"], str) or not c["message"]:
+        p.append("message: a non-empty string")
+    if not isinstance(c["when"], int) or isinstance(c["when"], bool) or c["when"] <= 0:
+        p.append("when: the time as a whole number of seconds (not a string)")
+    if c["state"] not in ("new", "notified", "ignored", "reported"):
+        p.append("state: new, notified, ignored or reported")
+    if not (isinstance(c["log"], list) and all(isinstance(x, str) for x in c["log"])):
+        p.append("log: a list of strings")
+    for k in ("issue", "pr"):
+        if k in c and not isinstance(c[k], str):
+            p.append(f"{k}: a string")
+    return p
+
+
+def lint_ai_ui(c, stem=None):
+    """Problems of a decoded assistant state file."""
+    if not isinstance(c, dict):
+        return ["not a JSON object"]
+    p = keys_problem(c, {"v", "open", "focused", "attention", "busy"}, ("v", "open", "focused", "attention", "busy"), "state")
+    if p:
+        return p
+    if c["v"] != VERSION or isinstance(c["v"], bool):
+        p.append(f"v is {c['v']!r}: this tool understands {VERSION}")
+    for k in ("open", "focused", "busy"):
+        if not isinstance(c[k], bool):
+            p.append(f"{k}: true or false")
+    if c["attention"] not in ("", "waiting", "done"):
+        p.append('attention: "waiting", "done" or ""')
+    return p
+
+
 # ---- agreement with the source of the application (--app) ------------------------------------------------------------------
 
 
@@ -283,6 +399,9 @@ def main(argv):
     if not args or args[0] in ("-h", "--help"):
         print(__doc__)
         return 0 if args else 2
+    kind = "catalog"
+    if args[0] in ("catalog", "context", "incident", "ai-ui"):
+        kind, args = args[0], args[1:]
     root, write, files = None, False, []
     it = iter(args)
     for a in it:
@@ -292,6 +411,9 @@ def main(argv):
             write = True
         else:
             files.append(a)
+    if kind != "catalog" and (root is not None or write):
+        print(f"x --app and --write are for catalogs, not for {kind} files")
+        return 2
     if write and root is None:
         print("x --write needs --app ROOT")
         return 2
@@ -308,7 +430,17 @@ def main(argv):
             print(f"x {f}: {e}")
             bad = True
             continue
-        problems = lint(c, pathlib.Path(f).stem)
+        stem = pathlib.Path(f).stem
+        if kind != "catalog":
+            problems = {"context": lint_context, "incident": lint_incident, "ai-ui": lint_ai_ui}[kind](c, stem)
+            for line in problems:
+                print(f"x {f}: {line}")
+            if problems:
+                bad = True
+            else:
+                print(f"ok {f}")
+            continue
+        problems = lint(c, stem)
         if write and not problems:
             if (e := write_actions(c, root)):
                 problems.append(e)
