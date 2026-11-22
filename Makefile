@@ -7,7 +7,7 @@
 #   make install-data PREFIX=~/.local         everything but the binaries (launcher, icon, licences, what the shell reads)
 #
 # Everything the application brings to the Filigrane desktop lives here and is installed together: the programs, the launcher,
-# the icon, and shell/ (the fallback menu of the bar, the brief of Rob), which ends in $(DATADIR)/filigrane/shell/ where
+# the icon, and shell/ (the fallback menu of the bar, the brief of Lia), which ends in $(DATADIR)/filigrane/shell/ where
 # `fili-bar link-system` finds it.
 #
 # cxx-qt finds Qt through qmake. QMAKE overrides the search below (Qt 6 only), for example
@@ -48,11 +48,11 @@ install-data:
 	# into the daemon, they are not installed
 	install -Dm644 shell/ctl/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/ctl/fili-term.json
 	install -Dm644 shell/appmenu/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/appmenu/fili-term.json
-	install -Dm644 shell/rob/fili-term.md $(DESTDIR)$(DATADIR)/filigrane/shell/rob/fili-term.md
+	install -Dm644 shell/lia/fili-term.md $(DESTDIR)$(DATADIR)/filigrane/shell/lia/fili-term.md
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/fili-term $(DESTDIR)$(BINDIR)/fili-term-daemon $(DESTDIR)$(BINDIR)/aeroport
 	rm -f $(DESTDIR)$(DATADIR)/applications/fili-term.desktop
 	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/fili-term.svg
 	rm -rf $(DESTDIR)$(DATADIR)/licenses/fili-term
-	rm -f $(DESTDIR)$(DATADIR)/filigrane/shell/ctl/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/appmenu/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/rob/fili-term.md
+	rm -f $(DESTDIR)$(DATADIR)/filigrane/shell/ctl/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/appmenu/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/lia/fili-term.md

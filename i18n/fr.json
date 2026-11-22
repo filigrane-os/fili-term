@@ -12,9 +12,9 @@
  "Also known as": "Aussi connu sous le nom de",
  "An agent": "Un agent",
  "Arrange": "Organiser",
- "Ask Rob About Last Command": "Demander à Rob (dernière commande)",
- "Ask Rob About This Command": "Demander à Rob",
- "Ask Rob Why It Failed": "Demander à Rob pourquoi elle a échoué",
+ "Ask Lia About Last Command": "Demander à Lia (dernière commande)",
+ "Ask Lia About This Command": "Demander à Lia",
+ "Ask Lia Why It Failed": "Demander à Lia pourquoi elle a échoué",
  "Below": "En dessous",
  "Branch of the new worktree": "Branche du nouveau worktree",
  "Built with": "Construit avec",
@@ -199,8 +199,8 @@
  "Warnings": "Avertissements",
  "Errors": "Erreurs",
  "entries": "entrées",
- "Ask Rob": "Demander à Rob",
+ "Ask Lia": "Demander à Lia",
  "Open file": "Ouvrir le fichier",
- "Rob was asked to look at it": "Rob a été prévenu",
+ "Lia was asked to look at it": "Lia a été prévenu",
  "Could not record the problem": "Impossible d'enregistrer le problème"
 }

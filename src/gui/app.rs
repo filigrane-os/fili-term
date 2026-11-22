@@ -62,7 +62,7 @@ pub mod qobject {
         fn tr(self: &Aeroport, text: &QString) -> QString;
         /// The Debug panel (View > Debug Logs): the entries after number `since` as JSON {seq, entries: [[level, line]]},
         /// the log file, clearing the buffer, a path opened with xdg-open, text copied, a problem recorded as an incident
-        /// (Rob is asked; returns its id, "" when it could not be recorded), the state of the panel
+        /// (Lia is asked; returns its id, "" when it could not be recorded), the state of the panel
         #[qinvokable]
         fn logs(self: &Aeroport, since: i32) -> QString;
         #[qinvokable]
@@ -91,18 +91,18 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "publishContext"]
         fn publish_context(self: &Aeroport, view: &QString, asked: i32);
-        /// "Ask Rob" on a command block: the context names the block, the chat drawer opens with the question
+        /// "Ask Lia" on a command block: the context names the block, the chat drawer opens with the question
         #[qinvokable]
-        #[cxx_name = "askRob"]
-        fn ask_rob(self: &Aeroport, view: &QString, block: i32, command: &QString, failed: bool);
-        /// "Ask Rob" header button (QML overload of `askRob` without arguments): `fili-ai here` shows the small field of Rob
+        #[cxx_name = "askLia"]
+        fn ask_lia(self: &Aeroport, view: &QString, block: i32, command: &QString, failed: bool);
+        /// "Ask Lia" header button (QML overload of `askLia` without arguments): `fili-ai here` shows the small field of Lia
         /// scoped to this application; the button shows only where the assistant (`fili-ai-daemon`) is installed
         #[qinvokable]
-        #[cxx_name = "askRob"]
-        fn ask_rob_here(self: &Aeroport);
+        #[cxx_name = "askLia"]
+        fn ask_lia_here(self: &Aeroport);
         #[qinvokable]
-        #[cxx_name = "robAvailable"]
-        fn rob_available(self: &Aeroport) -> bool;
+        #[cxx_name = "liaAvailable"]
+        fn lia_available(self: &Aeroport) -> bool;
         /// A notification of the desktop (a long command ended while the window was not watched)
         #[qinvokable]
         fn notify(self: &Aeroport, title: &QString, body: &QString);
@@ -374,7 +374,7 @@ impl qobject::Aeroport {
         write_context(&view.to_string(), asked);
     }
 
-    fn ask_rob(&self, view: &QString, block: i32, command: &QString, failed: bool) {
+    fn ask_lia(&self, view: &QString, block: i32, command: &QString, failed: bool) {
         write_context(&view.to_string(), block);
         let tr = super::i18n::tr;
         let command: String = command.to_string().split_whitespace().collect::<Vec<_>>().join(" ");
@@ -394,7 +394,7 @@ impl qobject::Aeroport {
             .map(|mut c| std::thread::spawn(move || c.wait()));
     }
 
-    fn ask_rob_here(&self) {
+    fn ask_lia_here(&self) {
         let child = std::process::Command::new("fili-ai")
             .arg("here")
             .stdin(std::process::Stdio::null())
@@ -406,7 +406,7 @@ impl qobject::Aeroport {
         }
     }
 
-    fn rob_available(&self) -> bool {
+    fn lia_available(&self) -> bool {
         std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("fili-ai-daemon").is_file()))
     }
 

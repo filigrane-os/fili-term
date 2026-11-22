@@ -1,4 +1,4 @@
-// "Ask Rob" button of the header: opens the chat session of Rob scoped to this application (`fili-ai here`).
+// "Ask Lia" button of the header: opens the chat session of Lia scoped to this application (`fili-ai here`).
 // Same size and states as the window buttons (28 x 24, hover surfaceHover); the speech bubble is drawn, so it follows
 // the theme (or the accent colour of an application that needs the user: set `ink`). Shared file: identical in every
 // application (reference: Casier).
@@ -50,8 +50,8 @@ Rectangle {
         id: area
         anchors.fill: parent
         hoverEnabled: true
-        onClicked: Aeroport.askRob()
+        onClicked: Aeroport.askLia()
     }
     Accessible.role: Accessible.Button
-    Accessible.name: Aeroport.tr("Ask Rob")
+    Accessible.name: Aeroport.tr("Ask Lia")
 }

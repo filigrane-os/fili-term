@@ -7,7 +7,7 @@
 // Level of the buffer and the file: info and above; FILI_LOG=debug (or trace) keeps more.
 // Incidents: a panic, a QML error (TypeError, ReferenceError, a binding loop...) or a critical message of Qt also writes an
 // incident file, ~/.local/state/filigrane/incidents/<id>.json, with its signature and the last log lines, and starts
-// `fili-incident notify` (a notification with "Ask Rob" and "Ignore"; see apps/fili-incident). One incident per signature a
+// `fili-incident notify` (a notification with "Ask Lia" and "Ignore"; see apps/fili-incident). One incident per signature a
 // day, three a run. Off with `[debug] incidents = "off"` in the settings file of the application. Nothing leaves the machine.
 use std::{
     collections::VecDeque,
@@ -275,7 +275,7 @@ pub fn incident(kind: &str, message: &str, manual: bool) -> Option<String> {
     drop(state);
     fs::create_dir_all(&dir).ok()?;
     fs::write(dir.join(format!("{id}.json")), serde_json::to_string_pretty(&record).ok()?).ok()?;
-    // The user is warned (or Rob asked, for a report the user asked for) by a separate process: this one may be dying
+    // The user is warned (or Lia asked, for a report the user asked for) by a separate process: this one may be dying
     let verb = if manual { "ask" } else { "notify" };
     let _ = std::process::Command::new("fili-incident")
         .args([verb, &id])

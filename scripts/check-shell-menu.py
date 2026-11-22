@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The fili-bar menu of Aeroport (shell/appmenu/fili-term.json) stays in agreement with the window (qml/Main.qml): every
 `fili-term ctl --pid %pid action NAME` of the menu is an action of the window (`run(name)`), every action of the window is in
-the menu (the few that have none are listed below), and the brief of Rob (shell/rob/fili-term.md) exists. The shortcuts are
+the menu (the few that have none are listed below), and the brief of Lia (shell/lia/fili-term.md) exists. The shortcuts are
 not checked here: they are configurable (keymap in Rust), so the menu shows the defaults and the keymap owns them.
 Usage: scripts/check-shell-menu.py (from anywhere)."""
 import json, pathlib, re, sys
@@ -18,8 +18,8 @@ prefixes = tuple(re.findall(r'name\.startsWith\("([a-z]+-)"\)', body))
 # output (button of the command block)
 without_menu = {"attention", "attention-clear", "context-menu", "edit-output"}
 errors = []
-if not (root / "shell/rob/fili-term.md").is_file():
-    errors.append("brief of Rob missing: shell/rob/fili-term.md")
+if not (root / "shell/lia/fili-term.md").is_file():
+    errors.append("brief of Lia missing: shell/lia/fili-term.md")
 
 def entries(items):
     for e in items:

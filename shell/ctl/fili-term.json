@@ -190,8 +190,8 @@
       "name": "edit-output"
     },
     {
-      "name": "ask-rob",
-      "label": "Ask Rob About Last Command"
+      "name": "ask-lia",
+      "label": "Ask Lia About Last Command"
     },
     {
       "name": "integrate",

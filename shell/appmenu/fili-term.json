@@ -18,7 +18,7 @@
         { "label": "Integrate Program", "exec": "fili-term ctl --pid %pid action integrate" },
         { "label": "Machines…", "exec": "fili-term ctl --pid %pid action machines" },
         { "sep": true },
-        { "label": "Ask Rob About Last Command", "exec": "fili-term ctl --pid %pid action ask-rob" },
+        { "label": "Ask Lia About Last Command", "exec": "fili-term ctl --pid %pid action ask-lia" },
         { "sep": true },
         { "label": "Settings…", "exec": "xdg-open ~/.config/filigrane/fili-term.toml" },
         { "sep": true },

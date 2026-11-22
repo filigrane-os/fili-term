@@ -52,11 +52,11 @@ The daemon loads its shell integration by itself (zsh through `ZDOTDIR`, bash th
 (OSC 133) and its folder (OSC 7); the daemon keeps the marks in the grid, so they survive reflow and history. Each
 command is a block: a hairline above it, a red bar in the margin when it failed (accent while it runs), the exit code
 and duration at the right of its command line. Hovering a block shows Copy output, Copy command, Run again (only at an
-idle prompt) and Ask Rob. Ctrl+Shift+Up/Down jumps between commands, Ctrl+Shift+O copies the last output.
+idle prompt) and Ask Lia. Ctrl+Shift+Up/Down jumps between commands, Ctrl+Shift+O copies the last output.
 
 From the command line (session `$FILI_TERM_SESSION` by default, or `--session ID`):
 `fili-term blocks` (JSON list), `fili-term output [BLOCK]` (output of a block, the last command by default),
-`fili-term send TEXT` (types text at the prompt without running it). Ask Rob writes the window's context file
+`fili-term send TEXT` (types text at the prompt without running it). Ask Lia writes the window's context file
 (`$XDG_RUNTIME_DIR/fili/context/PID.json`: session, folder, last commands) and runs `fili-ai ask`; the assistant
 reads the output itself with `fili-term output`.
 

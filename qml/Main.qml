@@ -654,15 +654,15 @@ Window {
         const k = keymap.find(x => x.action === action);
         return k && k.keys.length ? k.keys[0] : "";
     }
-    // The chat drawer (Rob) about a command block: the context file names it, Rob reads its output himself
-    function askRob(id, on) {
+    // The chat drawer (Lia) about a command block: the context file names it, Lia reads its output himself
+    function askLia(id, on) {
         const v = on || win.view;
         if (!v || id <= 0)
             return;
         const all = JSON.parse(v.contextJson()).blocks;
         const b = all.find(x => x.id === id);
         if (b)
-            Aeroport.askRob(v.contextJson(), id, b.command, b.exit !== null && b.exit !== 0);
+            Aeroport.askLia(v.contextJson(), id, b.command, b.exit !== null && b.exit !== 0);
     }
     // Integrated mode (src/modes), only when the user calls the program: `fili-term mode herdr`, or the footer's offer
     // when herdr runs in a tab (or [modes] herdr = "auto"). herdr's tabs become tabs of this window, each attached to the
@@ -1472,7 +1472,7 @@ Window {
             else if (name === "next-command") v.jumpBlock(1);
             else if (name === "copy-last-output") v.copyBlock(v.lastBlock(), 0);
             else if (name === "copy-last-command") v.copyCommand(v.lastBlock());
-            else if (name === "ask-rob") win.askRob(v.lastBlock());
+            else if (name === "ask-lia") win.askLia(v.lastBlock());
             else if (name === "edit-output") v.editBlock(v.lastBlock());
             else if (name === "find") win.openSearch();
             else if (name === "integrate") win.integrate();
@@ -1628,7 +1628,7 @@ Window {
             color: win.attending ? win.onAccent : FiliTheme.text
         }
         // Where the search field starts: at the left of the window buttons (the field and its two arrows)
-        readonly property real windowEdge: robButton.visible ? robButton.x : win.windowButtons ? windowButton.x : width - FiliTheme.margin
+        readonly property real windowEdge: liaButton.visible ? liaButton.x : win.windowButtons ? windowButton.x : width - FiliTheme.margin
         readonly property real searchLeft: windowEdge - FiliTheme.space3 - searchNav.width - FiliTheme.space1 - 180
         // The tools, left of the search field: as many buttons as the window has room for (win.headerActions), More for
         // those that did not fit, and the new tab button. Each is also a key and an entry of the bar menu: the header
@@ -1697,10 +1697,10 @@ Window {
             Accessible.role: Accessible.Button
             Accessible.name: Aeroport.tr("Window")
         }
-        // Ask Rob about this application (the failed-command button of a block asks about the command instead)
-        RobButton {
-            id: robButton
-            visible: Aeroport.robAvailable()
+        // Ask Lia about this application (the failed-command button of a block asks about the command instead)
+        LiaButton {
+            id: liaButton
+            visible: Aeroport.liaAvailable()
             anchors { right: win.windowButtons ? windowButton.left : parent.right; rightMargin: win.windowButtons ? FiliTheme.space1 : FiliTheme.margin; verticalCenter: parent.verticalCenter }
             ink: win.attending ? win.onAccent : FiliTheme.text
         }
@@ -2257,7 +2257,7 @@ Window {
                             spacing: FiliTheme.space1
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                readonly property var hovered: [copyOut, copyCmd, rerun, edit, files, rob].find(x => x.hovered)
+                                readonly property var hovered: [copyOut, copyCmd, rerun, edit, files, lia].find(x => x.hovered)
                                 text: hovered ? hovered.tip : blockBar.status()
                                 leftPadding: FiliTheme.space3
                                 rightPadding: FiliTheme.space2
@@ -2304,11 +2304,11 @@ Window {
                                 onClicked: Aeroport.showInFiles(blockBar.b.cwd)
                             }
                             IconButton {
-                                id: rob
+                                id: lia
                                 readonly property bool hovered: containsMouse
                                 name: "chat"
-                                tip: blockBar.b && blockBar.b.exit ? Aeroport.tr("Ask Rob Why It Failed") : Aeroport.tr("Ask Rob About This Command")
-                                onClicked: win.askRob(blockBar.b.id, pane.v)
+                                tip: blockBar.b && blockBar.b.exit ? Aeroport.tr("Ask Lia Why It Failed") : Aeroport.tr("Ask Lia About This Command")
+                                onClicked: win.askLia(blockBar.b.id, pane.v)
                             }
                         }
                         // "Running", "Failed (2) · 3.4 s", "Done · 850 ms"
@@ -2527,7 +2527,7 @@ Window {
                 }
             }
         }
-        // The latest file transaction (fili-tx: what Rob or a tool just changed), for a couple of minutes, with Undo
+        // The latest file transaction (fili-tx: what Lia or a tool just changed), for a couple of minutes, with Undo
         Row {
             id: txNotice
             property var tx: null

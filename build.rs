@@ -35,7 +35,7 @@ fn main() {
                 "qml/TextPrompt.qml",
                 "qml/TextButton.qml",
                 "qml/DebugPanel.qml",
-                "qml/RobButton.qml",
+                "qml/LiaButton.qml",
                 "qml/Tab.qml",
             ])
             .qml_file(QmlFile::from("qml/FiliTheme.qml").singleton(true))
