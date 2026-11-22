@@ -1,0 +1,39 @@
+{
+  "v": 1,
+  "app_id": "fili-term",
+  "name": "Aéroport",
+  "program": "fili-term",
+  "ctl": "fili-term ctl --pid %pid",
+  "commands": [
+    {
+      "verb": "action",
+      "args": "NAME",
+      "summary": "Run a menu command in the active window of that process",
+      "reads": false
+    },
+    {
+      "verb": "command",
+      "args": "NAME",
+      "summary": "Run a custom command of fili-term.toml ([[commands]]) by its name, in the active window",
+      "reads": false
+    },
+    {
+      "verb": "worktree",
+      "args": "BRANCH",
+      "summary": "Open a tab in a git worktree of that branch, for the repository of the active pane",
+      "reads": false
+    },
+    {
+      "verb": "machine",
+      "args": "NAME",
+      "summary": "Move herdr mode to that machine (its label, or \"local\" for this computer)",
+      "reads": false
+    },
+    {
+      "verb": "actions",
+      "args": "",
+      "summary": "JSON list of the action names",
+      "reads": true
+    }
+  ]
+}

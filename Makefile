@@ -31,6 +31,7 @@ build:
 test:
 	$(CARGO) test --release --locked --workspace
 	python3 -I scripts/check-shell-menu.py
+	python3 -I scripts/check-ctl-catalog.py
 
 install: build install-data
 	install -Dm755 $(TARGET_DIR)/release/fili-term $(DESTDIR)$(BINDIR)/fili-term
@@ -45,6 +46,7 @@ install-data:
 	install -Dm644 licenses/Jost-OFL.txt $(DESTDIR)$(DATADIR)/licenses/fili-term/Jost-OFL.txt
 	# Only what the Filigrane shell reads: the shell integration scripts of the terminal (shell/*.bash, shell/zsh) are compiled
 	# into the daemon, they are not installed
+	install -Dm644 shell/ctl/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/ctl/fili-term.json
 	install -Dm644 shell/appmenu/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/appmenu/fili-term.json
 	install -Dm644 shell/rob/fili-term.md $(DESTDIR)$(DATADIR)/filigrane/shell/rob/fili-term.md
 
@@ -53,4 +55,4 @@ uninstall:
 	rm -f $(DESTDIR)$(DATADIR)/applications/fili-term.desktop
 	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/fili-term.svg
 	rm -rf $(DESTDIR)$(DATADIR)/licenses/fili-term
-	rm -f $(DESTDIR)$(DATADIR)/filigrane/shell/appmenu/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/rob/fili-term.md
+	rm -f $(DESTDIR)$(DATADIR)/filigrane/shell/ctl/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/appmenu/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/rob/fili-term.md
