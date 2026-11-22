@@ -35,5 +35,303 @@
       "summary": "JSON list of the action names",
       "reads": true
     }
+  ],
+  "actions": [
+    {
+      "name": "about",
+      "label": "About Aéroport"
+    },
+    {
+      "name": "new-tab",
+      "label": "New Tab",
+      "keys": "Ctrl+Shift+T"
+    },
+    {
+      "name": "new-window",
+      "label": "New Window",
+      "keys": "Ctrl+Shift+N"
+    },
+    {
+      "name": "close-tab",
+      "label": "Close Tab",
+      "keys": "Ctrl+Alt+Shift+W"
+    },
+    {
+      "name": "close-window",
+      "label": "Close Window",
+      "keys": "Ctrl+Shift+Q"
+    },
+    {
+      "name": "copy",
+      "label": "Copy",
+      "keys": "Ctrl+Shift+C"
+    },
+    {
+      "name": "paste",
+      "label": "Paste",
+      "keys": "Ctrl+Shift+V"
+    },
+    {
+      "name": "next-tab",
+      "label": "Next Tab",
+      "keys": "Ctrl+PgDown"
+    },
+    {
+      "name": "previous-tab",
+      "label": "Previous Tab",
+      "keys": "Ctrl+PgUp"
+    },
+    {
+      "name": "zoom-in",
+      "label": "Zoom In",
+      "keys": "Ctrl++"
+    },
+    {
+      "name": "zoom-out",
+      "label": "Zoom Out",
+      "keys": "Ctrl+-"
+    },
+    {
+      "name": "zoom-reset",
+      "label": "Actual Size",
+      "keys": "Ctrl+0"
+    },
+    {
+      "name": "page-up",
+      "label": "Page Up",
+      "keys": "Shift+PgUp"
+    },
+    {
+      "name": "page-down",
+      "label": "Page Down",
+      "keys": "Shift+PgDown"
+    },
+    {
+      "name": "scroll-top",
+      "label": "Top of History"
+    },
+    {
+      "name": "scroll-bottom",
+      "label": "Back to Prompt"
+    },
+    {
+      "name": "window-actions",
+      "label": "Window Actions…"
+    },
+    {
+      "name": "toggle-window-buttons",
+      "label": "Show Window Buttons"
+    },
+    {
+      "name": "previous-command",
+      "label": "Previous Command",
+      "keys": "Ctrl+Shift+Up"
+    },
+    {
+      "name": "next-command",
+      "label": "Next Command",
+      "keys": "Ctrl+Shift+Down"
+    },
+    {
+      "name": "copy-last-output",
+      "label": "Copy Last Output",
+      "keys": "Ctrl+Shift+O"
+    },
+    {
+      "name": "copy-last-command",
+      "label": "Copy Last Command"
+    },
+    {
+      "name": "find",
+      "label": "Find…",
+      "keys": "Ctrl+Shift+F"
+    },
+    {
+      "name": "find-next",
+      "label": "Find Next",
+      "keys": "Ctrl+Shift+G"
+    },
+    {
+      "name": "find-previous",
+      "label": "Find Previous",
+      "keys": "Ctrl+Shift+H"
+    },
+    {
+      "name": "show-in-files",
+      "label": "Show in Casier"
+    },
+    {
+      "name": "tab-1"
+    },
+    {
+      "name": "tab-2"
+    },
+    {
+      "name": "tab-3"
+    },
+    {
+      "name": "tab-4"
+    },
+    {
+      "name": "tab-5"
+    },
+    {
+      "name": "tab-6"
+    },
+    {
+      "name": "tab-7"
+    },
+    {
+      "name": "tab-8"
+    },
+    {
+      "name": "tab-9"
+    },
+    {
+      "name": "edit-output"
+    },
+    {
+      "name": "ask-rob",
+      "label": "Ask Rob About Last Command"
+    },
+    {
+      "name": "integrate",
+      "label": "Integrate Program"
+    },
+    {
+      "name": "toggle-sidebar",
+      "label": "Show Sidebar",
+      "keys": "Ctrl+Shift+B"
+    },
+    {
+      "name": "split-right",
+      "label": "Split Right",
+      "keys": "Ctrl+Shift+D"
+    },
+    {
+      "name": "split-down",
+      "label": "Split Down",
+      "keys": "Ctrl+Shift+E"
+    },
+    {
+      "name": "close-pane",
+      "label": "Close Pane",
+      "keys": "Ctrl+Shift+W"
+    },
+    {
+      "name": "zoom-pane",
+      "label": "Zoom Pane",
+      "keys": "Ctrl+Shift+Return"
+    },
+    {
+      "name": "focus-left",
+      "label": "Pane on the Left",
+      "keys": "Ctrl+Alt+Left"
+    },
+    {
+      "name": "focus-right",
+      "label": "Pane on the Right",
+      "keys": "Ctrl+Alt+Right"
+    },
+    {
+      "name": "focus-up",
+      "label": "Pane Above",
+      "keys": "Ctrl+Alt+Up"
+    },
+    {
+      "name": "focus-down",
+      "label": "Pane Below",
+      "keys": "Ctrl+Alt+Down"
+    },
+    {
+      "name": "resize-left",
+      "label": "Move Divider Left",
+      "keys": "Ctrl+Alt+Shift+Left"
+    },
+    {
+      "name": "resize-right",
+      "label": "Move Divider Right",
+      "keys": "Ctrl+Alt+Shift+Right"
+    },
+    {
+      "name": "resize-up",
+      "label": "Move Divider Up",
+      "keys": "Ctrl+Alt+Shift+Up"
+    },
+    {
+      "name": "resize-down",
+      "label": "Move Divider Down",
+      "keys": "Ctrl+Alt+Shift+Down"
+    },
+    {
+      "name": "context-menu"
+    },
+    {
+      "name": "rename-pane",
+      "label": "Rename Pane…"
+    },
+    {
+      "name": "resize-mode",
+      "label": "Resize Mode",
+      "keys": "Ctrl+Alt+R"
+    },
+    {
+      "name": "edit-scrollback",
+      "label": "Open History in the Editor",
+      "keys": "Ctrl+Alt+Shift+E"
+    },
+    {
+      "name": "next-agent",
+      "label": "Next Agent Waiting",
+      "keys": "Ctrl+Alt+A"
+    },
+    {
+      "name": "next-workspace",
+      "label": "Next Workspace",
+      "keys": "Ctrl+Alt+PgDown"
+    },
+    {
+      "name": "previous-workspace",
+      "label": "Previous Workspace",
+      "keys": "Ctrl+Alt+PgUp"
+    },
+    {
+      "name": "new-workspace",
+      "label": "New Workspace…"
+    },
+    {
+      "name": "commands",
+      "label": "Commands…",
+      "keys": "Ctrl+Alt+P"
+    },
+    {
+      "name": "new-worktree",
+      "label": "New Tab in Worktree…"
+    },
+    {
+      "name": "broadcast",
+      "label": "Type in Every Pane",
+      "keys": "Ctrl+Alt+I"
+    },
+    {
+      "name": "machines",
+      "label": "Machines…"
+    },
+    {
+      "name": "toggle-journal",
+      "label": "Show Command Journal",
+      "keys": "Ctrl+Alt+J"
+    },
+    {
+      "name": "debug",
+      "label": "Debug Logs",
+      "keys": "Ctrl+Shift+L"
+    },
+    {
+      "name": "attention"
+    },
+    {
+      "name": "attention-clear"
+    }
   ]
 }
