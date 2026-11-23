@@ -21,7 +21,7 @@ TARGET_DIR ?= $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 QMAKE ?= $(firstword $(wildcard /usr/lib/qt6/bin/qmake6 /usr/lib64/qt6/bin/qmake6 /usr/lib/qt6/bin/qmake /usr/lib64/qt6/bin/qmake) $(shell command -v qmake6 qmake-qt6 2>/dev/null))
 export QMAKE
 
-.PHONY: all build test install install-data uninstall
+.PHONY: all build dev test install install-data uninstall
 
 all: build
 
@@ -57,3 +57,7 @@ uninstall:
 	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/fili-term.svg
 	rm -rf $(DESTDIR)$(DATADIR)/licenses/fili-term
 	rm -f $(DESTDIR)$(DATADIR)/filigrane/shell/ctl/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/appmenu/fili-term.json $(DESTDIR)$(DATADIR)/filigrane/shell/lia/fili-term.md
+
+# Development: builds without link-time optimisation (target/fast, incremental)
+dev:
+	$(CARGO) build --profile fast

@@ -33,3 +33,13 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# `make dev`: no link-time optimisation, several code generation units and incremental compilation, so that a change of the
+# application rebuilds in a fraction of the release time
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+debug = 0
