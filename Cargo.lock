@@ -371,6 +371,7 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "env_logger",
+ "fili-ui",
  "libc",
  "log",
  "serde_json",
@@ -386,6 +387,16 @@ dependencies = [
  "log",
  "polling",
  "serde_json",
+]
+
+[[package]]
+name = "fili-ui"
+version = "0.3.0"
+dependencies = [
+ "cxx",
+ "cxx-qt",
+ "cxx-qt-build",
+ "cxx-qt-lib",
 ]
 
 [[package]]

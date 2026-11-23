@@ -2,6 +2,8 @@
 //!
 //! `fili-term-daemon` (daemon/) keeps the sessions (ptys + terminal state); `fili-term` opens a window on a new session, in the
 //! window process already running if there is one (one Qt process for every window).
+use fili_ui as _;
+
 mod ctl;
 mod gui;
 mod logs;

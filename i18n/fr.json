@@ -1,4 +1,6 @@
 {
+ " finished": " a terminé",
+ " is waiting for you": " vous attend",
  "%1 finished": "%1 a terminé",
  "%1 is running": "%1 est lancé",
  "%1 is waiting for you": "%1 vous attend",
@@ -58,6 +60,7 @@
  "Floating": "Flottante",
  "Fullscreen": "Plein écran",
  "Grouped": "Groupés",
+ "Needs your attention": "Demande votre attention",
  "herdr runs on another machine: no integration": "herdr tourne sur une autre machine : pas d’intégration",
  "History": "Historique",
  "Idle": "Inactif",

@@ -3,9 +3,14 @@
 import QtQuick
 import QtQuick.Window
 import Fili.Term
+import Fili.UI
 
 Window {
     id: win
+    // The kit reads the theme through the application's object. Evaluated first: the tokens must be right from the first binding
+    readonly property bool kitReady: { FiliHost.backend = Aeroport; return true; }
+    // Colours of the terminal: "text background selection cursor c0 … c15" for TerminalView.colors
+    readonly property string terminalColors: [FiliTheme.m.text, FiliTheme.m.background, FiliTheme.m.surface_active, FiliTheme.accentColor.toString()].concat(FiliTheme.m.palette).join(" ")
 
     property int attachId: 0
     property string cwd: ""
@@ -106,7 +111,7 @@ Window {
 
     function tabTitle(t) {
         const v = t ? t.active : null;
-        return !v ? "" : t.modeTab !== "" ? t.modeLabel : v.title ? v.title : win.initialTitle !== "" ? win.initialTitle : Aeroport.shortPath(v.cwd);
+        return !v ? "" : t.modeTab !== "" ? t.modeLabel : t.name !== "" ? t.name : v.title ? v.title : win.initialTitle !== "" ? win.initialTitle : Aeroport.shortPath(v.cwd);
     }
     function newTab(props) {
         const t = tabComponent.createObject(stack, Object.assign({ visible: false }, props || {}));
@@ -582,18 +587,11 @@ Window {
         }
         select(tabs.indexOf(to));
     }
-    // A tab dragged in the row and dropped at x (row coordinates): its new place. herdr's tabs move in herdr.
-    function dropTab(from, x) {
-        // `to`: the place among the tabs of the row (the others are hidden)
-        let to = 0;
-        for (let k = 0; k < tabs.length; ++k) {
-            const it = tabRepeater.itemAt(k);
-            if (k !== from && it && it.visible && it.x + it.width / 2 < x)
-                ++to;
-        }
-        const t = tabs[from];
+    // A tab of the row moved to a place of the row (`to`, among the tabs of the row). herdr's tabs move in herdr.
+    function moveTab(from, to) {
+        const t = rowTabs[from];
         const others = rowTabs.filter(o => o !== t);
-        if (!t || to === rowTabs.indexOf(t))
+        if (!t || to === from)
             return;
         if (t.modeTab !== "") {
             const before = others.slice(0, to).filter(x => x.modeTab !== "").length;
@@ -611,6 +609,15 @@ Window {
         if (firstMode >= 0)
             modeAt = firstMode;
         current = tabs.indexOf(shown);
+    }
+    // A tab with one terminal becomes a window of its own: the session goes on, the new window attaches to it
+    function detachTab(t) {
+        const v = t ? t.active : null;
+        if (!t || t.modeTab !== "" || t.leaves.length !== 1 || !v || v.sessionId <= 0)
+            return;
+        const id = v.sessionId, dir = v.cwd;
+        closeTab(t, false);
+        Instance.openRequested(id, dir, false, false, "", [], "", false);
     }
     readonly property var swapLabels: ({ left: "With the Pane on the Left", right: "With the Pane on the Right", up: "With the Pane Above", down: "With the Pane Below" })
     function menuAction(id) {
@@ -1100,7 +1107,8 @@ Window {
     function nativeTabMenu(t, x, y) {
         nativeTarget = { tab: t, ws: t.workspace, x: x, y: y };
         const others = nativeWorkspaces.filter(w => w.id !== t.workspace).map(w => ({ id: "native:move-ws:" + w.id, label: workspaceLabel(w.id) }));
-        contextMenu.open(x, y, [{ id: "native:new-tab", label: Aeroport.tr("New Tab") },
+        contextMenu.open(x, y, [{ id: "native:rename-tab", label: Aeroport.tr("Rename Tab…") },
+                                { id: "native:new-tab", label: Aeroport.tr("New Tab") },
                                 { id: "native:move", label: Aeroport.tr("Move to Workspace"), children: others.concat([{ id: "native:move-new", label: Aeroport.tr("New Workspace…") }]) },
                                 { id: "native:new-worktree", label: Aeroport.tr("New Tab in Worktree…"), enabled: t.active !== null && Aeroport.isRepo(t.active.cwd) },
                                 { separator: true }, { id: "native:close-tab", label: Aeroport.tr("Close Tab") }]);
@@ -1116,6 +1124,7 @@ Window {
                 workspaceNames = names;
             });
         } else if (name === "close-workspace") closeWorkspace(m.ws);
+        else if (name === "rename-tab") namePrompt.open(m.x, m.y, 240, Aeroport.tr("Name of the tab"), tabTitle(m.tab), v => { m.tab.name = v.trim() });
         else if (name === "new-tab") addTab(0, m.tab && m.tab.active ? m.tab.active.cwd : cwd, [], m.ws);
         else if (name === "close-tab") closeTab(m.tab, true);
         else if (name === "new-worktree") worktreeNew(m.x, m.y, m.tab && m.tab.active ? m.tab.active.cwd : m.ws, m.ws);
@@ -1578,7 +1587,7 @@ Window {
             fontPixelSize: win.fontSize
             padding: win.settings.padding
             lineSpacing: win.settings.line_spacing
-            colors: FiliTheme.terminalColors
+            colors: win.terminalColors
             onExited: {
                 if (term.modeTerminal !== "" && modeClient.state !== "")
                     win.reattach(term);
@@ -1640,7 +1649,7 @@ Window {
             spacing: FiliTheme.space1
             Repeater {
                 model: win.headerActions
-                delegate: IconButton {
+                delegate: FiliIconButton {
                     required property var modelData
                     visible: win.headerVisible.indexOf(modelData.id) >= 0
                     name: modelData.icon
@@ -1653,7 +1662,7 @@ Window {
                     onClicked: win.run(modelData.act)
                 }
             }
-            IconButton {
+            FiliIconButton {
                 id: moreButton
                 visible: win.headerVisible.length < win.headerActions.length
                 name: "more"
@@ -1662,7 +1671,7 @@ Window {
                 tip: Aeroport.tr("More")
                 onClicked: { const p = moreButton.mapToItem(null, 0, moreButton.height + FiliTheme.space1); win.moreMenu(p.x, p.y) }
             }
-            IconButton { name: "plus"; accented: win.attending; ink: win.onAccent; tip: Aeroport.tr("New Tab"); hint: win.keyHint("new-tab"); onClicked: win.run("new-tab") }
+            FiliIconButton { name: "plus"; accented: win.attending; ink: win.onAccent; tip: Aeroport.tr("New Tab"); hint: win.keyHint("new-tab"); onClicked: win.run("new-tab") }
         }
         // Window buttons at the far right: close, and the panel of window actions (niri)
         Rectangle {
@@ -1698,7 +1707,7 @@ Window {
             Accessible.name: Aeroport.tr("Window")
         }
         // Ask Lia about this application (the failed-command button of a block asks about the command instead)
-        LiaButton {
+        FiliLiaButton {
             id: liaButton
             visible: Aeroport.liaAvailable()
             anchors { right: win.windowButtons ? windowButton.left : parent.right; rightMargin: win.windowButtons ? FiliTheme.space1 : FiliTheme.margin; verticalCenter: parent.verticalCenter }
@@ -1714,118 +1723,46 @@ Window {
         color: FiliTheme.border
     }
 
-    // Tabs, from two: one per shell of the window (Facteur's look); middle click or × closes one
-    Rectangle {
+    // Tabs, from two: one per shell of the window, the kit's tab row (move, close, detach). Each item shows what the tab does:
+    // a spinner while a command runs, a check or a cross when one ended while the tab was not shown, a bell when an agent waits
+    function tabItem(t) {
+        const pane = t.active;
+        const running = pane ? (pane.blocksRevision, pane.runningCommand()) : "";
+        // An agent's state first (Claude Code at its prompt is no running command)
+        const agentState = t.modeTab !== "" ? t.modeStatus : agentStateOf(t);
+        const hasAgent = t.modeTab === "" && t.leaves.some(v => v.agent !== "");
+        const state = agentState === "working" ? "running" : agentState === "blocked" ? "waiting" : agentState === "done" ? "ok"
+            : t.modeTab !== "" || hasAgent ? "" : running !== "" ? "running" : t.unseen ? (t.lastExit === 0 ? "ok" : "failed") : "";
+        return {
+            label: running !== "" && t.modeTab === "" && t.name === "" ? running : tabTitle(t),
+            icon: state === "running" ? "refresh" : state === "ok" ? "check" : state === "waiting" ? "bell" : state === "failed" ? "x" : "",
+            iconColor: (state === "failed" ? FiliTheme.danger : state === "waiting" ? FiliTheme.warning : state === "running" ? FiliTheme.accentColor : FiliTheme.textSecondary).toString(),
+            spin: state === "running"
+        };
+    }
+    // The model of the row follows the tabs; it is replaced only when something shown changed (a new model rebuilds the row)
+    property var rowItems: []
+    readonly property var rowItemsNow: rowTabs.map(t => tabItem(t))
+    onRowItemsNowChanged: if (JSON.stringify(rowItemsNow) !== JSON.stringify(rowItems)) rowItems = rowItemsNow
+    FiliTabBar {
         id: tabRow
         visible: win.rowTabs.length > 1 || win.modeState !== null
         anchors { left: parent.left; right: parent.right; top: toolbarLine.bottom }
         height: visible ? FiliTheme.tabBarHeight : 0
-        color: FiliTheme.background
-        Row {
-            anchors { left: parent.left; leftMargin: FiliTheme.margin; right: parent.right; rightMargin: FiliTheme.margin; verticalCenter: parent.verticalCenter }
-            spacing: FiliTheme.space3
-            Repeater {
-                id: tabRepeater
-                model: win.tabs.length
-                Rectangle {
-                    id: tab
-                    required property int index
-                    visible: win.tabs[index] !== undefined && win.shownInRow(win.tabs[index])
-                    // Dragged along the row: follows the pointer, dropped in its new place
-                    property real dragDx: 0
-                    transform: Translate { x: tab.dragDx }
-                    z: dragDx !== 0 ? 10 : 0
-                    opacity: dragDx !== 0 ? 0.85 : 1
-                    readonly property bool on: index === win.current
-                    readonly property bool hovered: tabArea.containsMouse || closeTabArea.containsMouse
-                    // Readable width (80 to 180), shared out when the row is full
-                    width: Math.max(80, Math.min(180, label.implicitWidth + 2 * FiliTheme.space4 + 16 + (tab.state !== "" ? 18 : 0),
-                                                 (tabRow.width - 2 * FiliTheme.margin) / Math.max(1, win.rowTabs.length) - FiliTheme.space3))
-                    height: FiliTheme.tabHeight
-                    radius: FiliTheme.radiusControl
-                    color: on ? FiliTheme.surfaceActive : hovered ? FiliTheme.surfaceHover : "transparent"
-                    // What the tab does: the command being run (spinner), else the folder; a check or a cross when a
-                    // command ended while the tab was not shown
-                    readonly property var term: win.tabs[index]
-                    readonly property var pane: term ? term.active : null
-                    readonly property string running: { if (!pane) return ""; pane.blocksRevision; return pane.runningCommand() }
-                    // An agent's state first (Claude Code at its prompt is no running command)
-                    readonly property string agentState: term.modeTab !== "" ? term.modeStatus : win.agentStateOf(term)
-                    readonly property bool hasAgent: term.modeTab === "" && term.leaves.some(v => v.agent !== "")
-                    readonly property string state: agentState === "working" ? "running" : agentState === "blocked" ? "waiting" : agentState === "done" ? "ok"
-                        : term.modeTab !== "" || hasAgent ? "" : running !== "" ? "running" : term.unseen ? (term.lastExit === 0 ? "ok" : "failed") : ""
-                    Icon {
-                        id: stateIcon
-                        visible: tab.state !== ""
-                        anchors { left: parent.left; leftMargin: FiliTheme.space3; verticalCenter: parent.verticalCenter }
-                        name: tab.state === "running" ? "refresh" : tab.state === "ok" ? "check" : tab.state === "waiting" ? "bell" : "x"
-                        size: 12
-                        color: tab.state === "failed" ? FiliTheme.danger : tab.state === "waiting" ? FiliTheme.warning : tab.state === "running" ? FiliTheme.accentColor : FiliTheme.textSecondary
-                        RotationAnimator on rotation { running: tab.state === "running" && win.active; from: 0; to: 360; duration: 1400; loops: Animation.Infinite }
-                    }
-                    Text {
-                        id: label
-                        anchors { left: stateIcon.visible ? stateIcon.right : parent.left; leftMargin: stateIcon.visible ? FiliTheme.space2 : FiliTheme.space4; right: parent.right; rightMargin: FiliTheme.space4; verticalCenter: parent.verticalCenter }
-                        text: tab.running !== "" && tab.term.modeTab === "" ? tab.running : win.tabTitle(win.tabs[tab.index])
-                        elide: Text.ElideRight
-                        font.family: FiliTheme.font
-                        font.pixelSize: FiliTheme.sizeList
-                        font.weight: tab.on ? FiliTheme.weightAccent : Font.Normal
-                        color: tab.on ? FiliTheme.text : FiliTheme.textSecondary
-                    }
-                    MouseArea {
-                        id: tabArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-                        property real pressX: 0
-                        property bool moved: false
-                        onPressed: e => { pressX = e.x; moved = false }
-                        onPositionChanged: e => {
-                            if (pressed && (e.buttons & Qt.LeftButton) && (moved || Math.abs(e.x - pressX) > 8)) {
-                                moved = true;
-                                tab.dragDx = e.x - pressX;
-                            }
-                        }
-                        onReleased: e => {
-                            if (moved)
-                                win.dropTab(tab.index, tab.x + tab.width / 2 + tab.dragDx);
-                            tab.dragDx = 0;
-                        }
-                        onClicked: e => {
-                            if (moved)
-                                return;
-                            const t = win.tabs[tab.index];
-                            if (e.button === Qt.RightButton) {
-                                // herdr's tab menu on a tab of herdr
-                                const p = tabArea.mapToItem(null, e.x, e.y);
-                                if (t.modeTab !== "")
-                                    win.herdrMenu("tabs", { id: t.modeTab, label: t.modeLabel }, p.x, p.y);
-                                else
-                                    win.nativeTabMenu(t, p.x, p.y);
-                            } else if (e.button === Qt.MiddleButton) {
-                                win.closeTab(t, true);
-                            } else {
-                                win.select(tab.index);
-                            }
-                        }
-                    }
-                    Rectangle {
-                        visible: tab.hovered
-                        anchors { right: parent.right; rightMargin: FiliTheme.space1; verticalCenter: parent.verticalCenter }
-                        width: 20
-                        height: 20
-                        radius: FiliTheme.radiusControl
-                        color: closeTabArea.containsMouse ? FiliTheme.alpha(FiliTheme.text, 0.12) : tab.color
-                        Icon { anchors.centerIn: parent; name: "x"; size: 12; color: FiliTheme.textSecondary }
-                        MouseArea { id: closeTabArea; anchors.fill: parent; hoverEnabled: true; onClicked: win.closeTab(win.tabs[tab.index], true) }
-                        Accessible.role: Accessible.Button
-                        Accessible.name: Aeroport.tr("Close Tab")
-                    }
-                }
-            }
+        model: win.rowItems
+        currentIndex: win.rowTabs.indexOf(win.tab)
+        onTabClicked: index => win.select(win.tabs.indexOf(win.rowTabs[index]))
+        onCloseRequested: index => win.closeTab(win.rowTabs[index], true)
+        onReordered: (from, to) => win.moveTab(from, to)
+        onDetachRequested: index => win.detachTab(win.rowTabs[index])
+        onContextRequested: (index, x, y) => {
+            const t = win.rowTabs[index];
+            // herdr's tab menu on a tab of herdr
+            if (t.modeTab !== "")
+                win.herdrMenu("tabs", { id: t.modeTab, label: t.modeLabel }, x, y);
+            else
+                win.nativeTabMenu(t, x, y);
         }
-        Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: FiliTheme.borderWidth; color: FiliTheme.border }
     }
 
     // Sidebar of herdr: workspaces, agents, the panes of the tab shown
@@ -1928,7 +1865,7 @@ Window {
             height: 20
             radius: FiliTheme.radiusControl
             color: clearArea.containsMouse ? FiliTheme.alpha(FiliTheme.text, 0.12) : "transparent"
-            Icon { anchors.centerIn: parent; name: "x"; size: 12; color: FiliTheme.textSecondary }
+            FiliIcon { anchors.centerIn: parent; name: "x"; size: 12; color: FiliTheme.textSecondary }
             MouseArea {
                 id: clearArea
                 anchors.fill: parent
@@ -1947,8 +1884,8 @@ Window {
         x: searchBar.x + searchBar.width + FiliTheme.space1
         y: searchBar.y + (searchBar.height - 24) / 2
         z: 60
-        IconButton { name: "chevron-left"; accented: searchBar.tinted; ink: win.onAccent; tip: Aeroport.tr("Previous Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-previous") }
-        IconButton { name: "chevron-right"; accented: searchBar.tinted; ink: win.onAccent; tip: Aeroport.tr("Next Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-next") }
+        FiliIconButton { name: "chevron-left"; accented: searchBar.tinted; ink: win.onAccent; tip: Aeroport.tr("Previous Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-previous") }
+        FiliIconButton { name: "chevron-right"; accented: searchBar.tinted; ink: win.onAccent; tip: Aeroport.tr("Next Match"); enabledState: win.view !== null && win.view.searchCount > 0; onClicked: win.run("find-next") }
     }
 
     // Dividers of the tab shown: a line, and a wider band around it that takes the drag (the cursor says which way)
@@ -2050,7 +1987,7 @@ Window {
                                 anchors { right: parent.right; rightMargin: FiliTheme.space3 }
                                 y: entry.tall ? journalMargin.rowHeight : 0
                                 height: journalMargin.rowHeight
-                                Icon {
+                                FiliIcon {
                                     visible: entry.modelData.state === 2
                                     anchors.verticalCenter: parent.verticalCenter
                                     name: entry.failed ? "x" : "check"
@@ -2265,7 +2202,7 @@ Window {
                                 font.pixelSize: FiliTheme.sizeSmall
                                 color: !hovered && blockBar.b && blockBar.b.exit ? FiliTheme.danger : FiliTheme.textSecondary
                             }
-                            IconButton {
+                            FiliIconButton {
                                 id: copyOut
                                 readonly property bool hovered: containsMouse
                                 name: "copy"
@@ -2273,14 +2210,14 @@ Window {
                                 enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
                                 onClicked: pane.v.copyBlock(blockBar.b.id, 0)
                             }
-                            IconButton {
+                            FiliIconButton {
                                 id: copyCmd
                                 readonly property bool hovered: containsMouse
                                 name: "terminal"
                                 tip: Aeroport.tr("Copy Command")
                                 onClicked: pane.v.copyCommand(blockBar.b.id)
                             }
-                            IconButton {
+                            FiliIconButton {
                                 id: rerun
                                 readonly property bool hovered: containsMouse
                                 name: "refresh"
@@ -2288,7 +2225,7 @@ Window {
                                 enabledState: pane.v !== null && blockBar.b !== null && pane.v.blocksRevision >= 0 && pane.v.canRerun()
                                 onClicked: pane.v.rerunBlock(blockBar.b.id)
                             }
-                            IconButton {
+                            FiliIconButton {
                                 id: edit
                                 readonly property bool hovered: containsMouse
                                 name: "compose"
@@ -2296,14 +2233,14 @@ Window {
                                 enabledState: blockBar.b !== null && blockBar.b.outputTop >= 0
                                 onClicked: pane.v.editBlock(blockBar.b.id)
                             }
-                            IconButton {
+                            FiliIconButton {
                                 id: files
                                 readonly property bool hovered: containsMouse
                                 name: "folder"
                                 tip: Aeroport.tr("Show in Casier")
                                 onClicked: Aeroport.showInFiles(blockBar.b.cwd)
                             }
-                            IconButton {
+                            FiliIconButton {
                                 id: lia
                                 readonly property bool hovered: containsMouse
                                 name: "chat"
@@ -2329,7 +2266,7 @@ Window {
     }
 
     // Debug panel (View > Debug Logs, Ctrl+Shift+L): the log of the window process, a band above the footer
-    DebugPanel {
+    FiliDebugPanel {
         id: debug
         anchors { bottom: footer.top; left: parent.left; right: parent.right }
     }
@@ -2618,7 +2555,7 @@ Window {
                     fontPixelSize: win.fontSize
                     padding: win.settings.padding
                     lineSpacing: win.settings.line_spacing
-                    colors: FiliTheme.terminalColors
+                    colors: win.terminalColors
                     onExited: win.closePopup()
                     Component.onCompleted: forceActiveFocus()
                 }
@@ -2650,7 +2587,7 @@ Window {
         }
     }
 
-    ContextMenu {
+    FiliMenu {
         id: contextMenu
         onActivated: id => win.menuAction(id)
         onVisibleChanged: if (!visible && !namePrompt.visible) win.refocus()
@@ -2659,15 +2596,18 @@ Window {
         id: namePrompt
         onVisibleChanged: if (!visible) win.refocus()
     }
-    WindowPanel {
+    FiliWindowPanel {
         id: windowPanel
         anchorRight: win.headerShown ? width - (toolbar.height - closeButton.height) / 2 : width - FiliTheme.margin
         anchorTop: toolbar.height + 1
         onVisibleChanged: if (!visible) win.refocus()
     }
-    AboutCard {
+    FiliAboutCard {
         id: aboutCard
-        anchors.fill: parent
+        z: 210
+        appName: "Aéroport"
+        tagline: Aeroport.tr("The terminal of Filigrane")
+        iconSource: "qrc:/qt/qml/Fili/Term/data/icons/hicolor/scalable/apps/fili-term.svg"
         onVisibleChanged: if (!visible) win.refocus()
     }
 

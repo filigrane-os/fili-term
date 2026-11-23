@@ -1,8 +1,12 @@
 // Qt Quick window of fili-term (module Fili.Term, qrc:/qt/qml/Fili/Term/qml/); the terminal grid is a QQuickPaintedItem
 // written in Rust (src/gui/terminal.rs) that talks to the session daemon over its Unix socket.
-use cxx_qt_build::{CxxQtBuilder, QmlFile, QmlModule};
+use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {
+    // Tokens of the shared kit (Fili.UI), for the test that checks the FiliTheme.* names used in the QML
+    if let Ok(p) = std::env::var("DEP_FILI_UI_THEME_QML") {
+        println!("cargo::rustc-env=FILI_UI_THEME_QML={p}");
+    }
     // Version of the About card: tag or commit of the repository, else the version of Cargo.toml
     let git = std::process::Command::new("git")
         .args(["describe", "--tags", "--always", "--dirty"])
@@ -22,23 +26,11 @@ fn main() {
             .qml_files([
                 "qml/App.qml",
                 "qml/Main.qml",
-                "qml/AboutCard.qml",
-                "qml/FiliScrollBar.qml",
-                "qml/KineticScroll.qml",
-                "qml/WindowGlyph.qml",
-                "qml/WindowPanel.qml",
-                "qml/FocusRing.qml",
-                "qml/Icon.qml",
-                "qml/IconButton.qml",
                 "qml/Sidebar.qml",
-                "qml/ContextMenu.qml",
                 "qml/TextPrompt.qml",
-                "qml/TextButton.qml",
-                "qml/DebugPanel.qml",
-                "qml/LiaButton.qml",
                 "qml/Tab.qml",
             ])
-            .qml_file(QmlFile::from("qml/FiliTheme.qml").singleton(true))
+            .depend("Fili.UI")
             .depend("QtQuick"),
     )
     .qrc_resources([
