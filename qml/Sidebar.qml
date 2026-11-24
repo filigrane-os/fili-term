@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Window
 import Fili.Term
+import Fili.UI
 
 Rectangle {
     id: side
@@ -107,7 +108,7 @@ Rectangle {
                             Accessible.role: Accessible.Button
                             Accessible.name: text
                         }
-                        IconButton {
+                        FiliIconButton {
                             id: add
                             visible: section.modelData.add
                             anchors { right: parent.right; rightMargin: FiliTheme.space2; bottom: parent.bottom; bottomMargin: (FiliTheme.sideRowHeight - height) / 2 }

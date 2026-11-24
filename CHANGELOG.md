@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.5.0 (2026-11-24)
+
+- The interface controls (theme, buttons, menus, scroll, window and debug panels, About card, tab row) come from the shared `fili-ui` kit instead of local copies; the terminal colours stay computed here from the palette.
+- The tab row is the kit's: a tab moves, closes and detaches the same way as in every Filigrane application, and shows the running command and the alerts as icons.
+- Rename a tab: right click, "Rename Tab…" (also `ctl action rename-tab`).
+
 ## v3.4.0 (2026-11-22)
 
 - The assistant is now named Lia: the header button and the menu entry say "Ask Lia", and the hidden brief is `shell/lia/<app_id>.md` (the older `rob/` is still read).

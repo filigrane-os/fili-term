@@ -364,13 +364,14 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fili-term"
-version = "3.4.0"
+version = "3.5.0"
 dependencies = [
  "cxx",
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
  "env_logger",
+ "fili-ui",
  "libc",
  "log",
  "serde_json",
@@ -386,6 +387,17 @@ dependencies = [
  "log",
  "polling",
  "serde_json",
+]
+
+[[package]]
+name = "fili-ui"
+version = "0.4.0"
+source = "git+https://github.com/filigrane-os/fili-ui?tag=v0.4.0#31220abde94a35a85a3b03c0680accbc97cfc306"
+dependencies = [
+ "cxx",
+ "cxx-qt",
+ "cxx-qt-build",
+ "cxx-qt-lib",
 ]
 
 [[package]]

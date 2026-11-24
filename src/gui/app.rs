@@ -13,6 +13,11 @@ pub mod qobject {
         #[qml_singleton]
         #[qproperty(bool, light, READ, NOTIFY = theme_changed)]
         #[qproperty(QString, accent, READ, NOTIFY = theme_changed)]
+        // Counts the changes of the settings files (fili-term.toml, theme.toml): the kit's theme reads it to follow a change
+        // made while the window is open
+        #[qproperty(i32, settings_rev, cxx_name = "settingsRev", READ, NOTIFY = theme_changed)]
+        // The keyboard was used last: the focus ring shows (the kit sets it)
+        #[qproperty(bool, key_nav, cxx_name = "keyNav")]
         type Aeroport = super::AeroportRust;
 
         #[qsignal]
@@ -202,6 +207,8 @@ use std::{env, path::PathBuf, pin::Pin};
 pub struct AeroportRust {
     light: bool,
     accent: QString,
+    settings_rev: i32,
+    key_nav: bool,
 }
 
 fn home() -> String {
@@ -257,7 +264,15 @@ impl cxx_qt::Initialize for qobject::Aeroport {
                 if unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) } <= 0 {
                     return;
                 }
-                if qt.queue(|mut f| f.as_mut().window_changed()).is_err() {
+                if qt
+                    .queue(|mut f| {
+                        let rev = f.settings_rev.wrapping_add(1);
+                        f.as_mut().rust_mut().settings_rev = rev;
+                        f.as_mut().theme_changed();
+                        f.as_mut().window_changed();
+                    })
+                    .is_err()
+                {
                     return;
                 }
             }

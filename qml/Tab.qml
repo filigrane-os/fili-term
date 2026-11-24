@@ -3,6 +3,7 @@
 // the leaves out itself, draws the dividers between them (dragged to resize) and dims the panes without the focus.
 import QtQuick
 import Fili.Term
+import Fili.UI
 
 Item {
     id: tab
@@ -20,6 +21,8 @@ Item {
     property bool shown: false
     // Result of a command that ended while this tab was not shown, until the tab is selected
     property bool unseen: false
+    // Name given with Rename Tab… (empty: the title of the terminal), for the life of the window
+    property string name: ""
     property int lastExit: 0
     // A tab of herdr: its tab id, its label and the status of its agents (its panes come from herdr's layout, each
     // terminal attached to one pane: modePane / modeTerminal of the view)

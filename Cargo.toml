@@ -1,6 +1,6 @@
 [package]
 name = "fili-term"
-version = "3.4.0"
+version = "3.5.0"
 edition = "2024"
 description = "fili-term: the Filigrane terminal, a small session daemon (Rust, alacritty_terminal) and a Qt Quick window"
 license = "GPL-3.0-or-later"
@@ -15,6 +15,7 @@ default = ["gui"]
 gui = []
 
 [dependencies]
+fili-ui = { git = "https://github.com/filigrane-os/fili-ui", tag = "v0.4.0" }
 env_logger = { version = "0.11", default-features = false }
 libc = "0.2"
 log = "0.4"
@@ -32,3 +33,13 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# `make dev`: no link-time optimisation, several code generation units and incremental compilation, so that a change of the
+# application rebuilds in a fraction of the release time
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+debug = 0

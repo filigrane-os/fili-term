@@ -2,6 +2,7 @@
 // Casier's inline rename. Enter keeps the text, Escape or a click elsewhere cancels.
 import QtQuick
 import Fili.Term
+import Fili.UI
 
 Item {
     id: prompt
