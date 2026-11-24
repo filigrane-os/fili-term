@@ -1,6 +1,6 @@
 [package]
 name = "fili-term"
-version = "3.4.0"
+version = "3.5.0"
 edition = "2024"
 description = "fili-term: the Filigrane terminal, a small session daemon (Rust, alacritty_terminal) and a Qt Quick window"
 license = "GPL-3.0-or-later"
@@ -15,7 +15,7 @@ default = ["gui"]
 gui = []
 
 [dependencies]
-fili-ui = { path = "../fili-ui-icons" }
+fili-ui = { git = "https://github.com/filigrane-os/fili-ui", tag = "v0.4.0" }
 env_logger = { version = "0.11", default-features = false }
 libc = "0.2"
 log = "0.4"
