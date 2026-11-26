@@ -4,8 +4,9 @@ name: Bump fili-ui kit
 # request that moves the pin (Cargo.toml and Cargo.lock) and start the CI on it, so a kit change is built and tested here without
 # building anything locally. It is never merged or released by itself: a kit change touches the look of every application, so the
 # pull request is merged once its CI is green (and the merge of a version raise is what tags). A pull request opened with the
-# default token starts no workflow, a workflow_dispatch does: hence the explicit `gh workflow run ci.yml` on the branch. Needs
-# "Allow GitHub Actions to create and approve pull requests" in the repository settings. The same file is in every application.
+# default token starts no workflow, a workflow_dispatch does: hence the explicit `gh workflow run ci.yml` on the branch. Opening the
+# pull request needs "Allow GitHub Actions to create and approve pull requests" (organisation and repository settings); without
+# it the branch and its CI are still there, with a warning. The same file is in every application.
 on:
   schedule:
     - cron: '41 * * * *'
@@ -51,6 +52,8 @@ jobs:
           cargo update -p fili-ui
           git commit -q -am "fili-ui kit $new"
           git push -q origin "$branch"
-          gh pr create --base main --head "$branch" --title "fili-ui kit $new" \
-            --body "Moves the fili-ui kit from \`$old\` to \`$new\` (Cargo.toml and Cargo.lock); the changes are in the kit's CHANGELOG.md. The CI below builds and tests it. Merge when it is green; a release also needs a version raise and its CHANGELOG.md section."
           gh workflow run ci.yml --ref "$branch"
+          # The organisation may not let Actions open pull requests: the branch and its CI are there anyway
+          gh pr create --base main --head "$branch" --title "fili-ui kit $new" \
+            --body "Moves the fili-ui kit from \`$old\` to \`$new\` (Cargo.toml and Cargo.lock); the changes are in the kit's CHANGELOG.md. The CI below builds and tests it. Merge when it is green; a release also needs a version raise and its CHANGELOG.md section." \
+            || echo "::warning::no pull request (Actions may not open one in this organisation): branch $branch and its CI are ready, open the pull request from it"
