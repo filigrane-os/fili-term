@@ -217,6 +217,7 @@ the sessions.
 
 | version | window (PSS) | daemon (PSS) | CPU idle (window / daemon) | notes |
 |---|---|---|---|---|
+| v3.6.0 | 91 MB RSS | 7 MB RSS | 3.5 % / 0.2 % | 1 terminal in use, kit fili-ui 0.7.1; PSS not measured |
 | v2.0.0 (V0 figures above) | 41 MB | 7 MB | not measured | 1 terminal |
 | v3.0.0 | 43 MB | 16 MB | 0.1 % / 0.1 % | 1 session open for 20 minutes, the daemon's blocks and history included |
 | v3.1.0 | not measured | not measured | not measured | Debug panel closed by default; the log adds a 2000-line buffer and a file |
