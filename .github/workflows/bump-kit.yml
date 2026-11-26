@@ -1,0 +1,56 @@
+name: Bump fili-ui kit
+
+# Every hour (and on demand): when filigrane-os/fili-ui has a release tag newer than the one pinned in Cargo.toml, open a pull
+# request that moves the pin (Cargo.toml and Cargo.lock) and start the CI on it, so a kit change is built and tested here without
+# building anything locally. It is never merged or released by itself: a kit change touches the look of every application, so the
+# pull request is merged once its CI is green (and the merge of a version raise is what tags). A pull request opened with the
+# default token starts no workflow, a workflow_dispatch does: hence the explicit `gh workflow run ci.yml` on the branch. Needs
+# "Allow GitHub Actions to create and approve pull requests" in the repository settings. The same file is in every application.
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: bump-kit
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open a pull request for a newer kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pin='filigrane-os/fili-ui", tag = "v[0-9]+\.[0-9]+\.[0-9]+"'
+          mapfile -t files < <(grep -rlE "$pin" --include=Cargo.toml .)
+          [ ${#files[@]} -gt 0 ] || { echo "no fili-ui pin in Cargo.toml"; exit 0; }
+          old="$(grep -hoE "$pin" "${files[@]}" | grep -oE 'v[0-9.]+' | sort -V | tail -1)"
+          new="$(git ls-remote --tags --refs https://github.com/filigrane-os/fili-ui | sed 's|.*refs/tags/||' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          if [ -z "$new" ] || [ "$new" = "$old" ] || [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1)" != "$new" ]; then
+            echo "kit $old is the newest"
+            exit 0
+          fi
+          branch="kit/fili-ui-$new"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "$branch already exists: nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -q -c "$branch"
+          sed -i -E "s|(filigrane-os/fili-ui\", tag = \")v[0-9.]+\"|\1$new\"|" "${files[@]}"
+          cargo update -p fili-ui
+          git commit -q -am "fili-ui kit $new"
+          git push -q origin "$branch"
+          gh pr create --base main --head "$branch" --title "fili-ui kit $new" \
+            --body "Moves the fili-ui kit from \`$old\` to \`$new\` (Cargo.toml and Cargo.lock); the changes are in the kit's CHANGELOG.md. The CI below builds and tests it. Merge when it is green; a release also needs a version raise and its CHANGELOG.md section."
+          gh workflow run ci.yml --ref "$branch"
