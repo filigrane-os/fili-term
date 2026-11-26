@@ -1693,18 +1693,13 @@ Window {
             Accessible.role: Accessible.Button
             Accessible.name: Aeroport.tr("Close window")
         }
-        Rectangle {
+        FiliWindowButton {
             id: windowButton
             visible: win.windowButtons
+            panel: windowPanel
             anchors { right: closeButton.left; rightMargin: FiliTheme.space1; verticalCenter: parent.verticalCenter }
-            width: 28
-            height: 24
-            radius: FiliTheme.radiusControl
-            color: windowArea.pressed || windowArea.containsMouse || windowPanel.visible ? (win.attending ? win.tintHover : windowArea.pressed ? FiliTheme.surfaceActive : FiliTheme.surfaceHover) : "transparent"
-            WindowGlyph { anchors.centerIn: parent; kind: "window"; width: 16; height: 16; color: win.attending ? win.onAccent : FiliTheme.text }
-            MouseArea { id: windowArea; anchors.fill: parent; hoverEnabled: true; onClicked: windowPanel.visible ? windowPanel.close() : windowPanel.open() }
-            Accessible.role: Accessible.Button
-            Accessible.name: Aeroport.tr("Window")
+            ink: win.attending ? win.onAccent : FiliTheme.text
+            hoverColor: win.attending ? win.tintHover : FiliTheme.hoverFill
         }
         // Ask Lia about this application (the failed-command button of a block asks about the command instead)
         FiliLiaButton {
